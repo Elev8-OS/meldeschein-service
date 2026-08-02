@@ -1,0 +1,16 @@
+{
+  "name": "meldeschein-service",
+  "version": "0.1.0",
+  "description": "Webhook-Service: Elev8 Guest Guide -> Hochschwarzwald Quick Check-in",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.22.2",
+    "playwright": "1.45.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
