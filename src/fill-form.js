@@ -79,6 +79,53 @@ async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath } =
 
     if (!result.ok) throw new Error(result.error);
 
+    // Geburtsdatum: eigene KO-Komponente, reagiert nicht aufs Observable.
+    // Deshalb die sichtbaren Felder direkt befüllen (Einzelfeld oder Tag/Monat/Jahr).
+    const birthResult = await page.evaluate((d) => {
+      function setNative(el, val) {
+        if (el.tagName === "SELECT") {
+          const want = [String(val), String(val).padStart(2, "0")];
+          const opt = Array.from(el.options).find(
+            (o) => want.includes(o.value) || want.includes(o.text.trim())
+          );
+          if (!opt) return false;
+          el.value = opt.value;
+        } else {
+          el.value = val;
+        }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+      function fillBirthdate(i, iso) {
+        const [y, mo, day] = iso.split("-");
+        const label = document.getElementById("quick-check-in__birthdate" + i);
+        if (!label) return { i, mode: "label fehlt" };
+        const row = label.closest(".row");
+        const fields = row ? Array.from(row.querySelectorAll("input, select")) : [];
+        if (fields.length === 1) {
+          return { i, mode: "einzelfeld", ok: setNative(fields[0], `${day}.${mo}.${y}`) };
+        }
+        if (fields.length >= 3) {
+          const okD = setNative(fields[0], String(parseInt(day, 10)));
+          const okM = setNative(fields[1], String(parseInt(mo, 10)));
+          const okY = setNative(fields[2], y);
+          return { i, mode: "tag/monat/jahr", ok: okD && okM && okY };
+        }
+        return { i, mode: "unbekannt", felder: fields.map((f) => f.tagName + ":" + (f.type || "")) };
+      }
+      const results = [fillBirthdate(0, d.mainGuest.birthDate)];
+      d.companions.forEach((c, i) => results.push(fillBirthdate(i + 1, c.birthDate)));
+      return results;
+    }, data);
+
+    console.log("[GEBURTSDATUM]", JSON.stringify(birthResult));
+    const birthFailed = birthResult.find((r) => r.ok === false || r.mode === "label fehlt" || r.mode === "unbekannt");
+    if (birthFailed) {
+      throw new Error(`Geburtsdatum konnte nicht gesetzt werden: ${JSON.stringify(birthFailed)}`);
+    }
+    await page.waitForTimeout(300);
+
     // Bestätigungs-Checkbox (Richtigkeit der Daten – Zustimmung des Gastes
     // wurde bereits im Guest Guide eingeholt und dokumentiert)
     await page.check("#correctness-disclaimer");
