@@ -7,7 +7,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 const FILE = path.join(DATA_DIR, "tenants.json");
 
 const SEED = {
-  "TEN-BLACKHOME": {
+  "2cb840b1-cb15-4648-a175-e0c8b96bc53a": {
     name: "BlackHome",
     formUrl:
       "https://shop.hochschwarzwald.de/de/registration/guestcard/genericquickcheckin/?serviceProvider%5B0%5D=0511301139&partner=1e03b1b4-58db-11f1-a427-cac49ee4ac52",
