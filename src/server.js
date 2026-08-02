@@ -4,7 +4,8 @@
 const express = require("express");
 const { mapGuestGuideToMeldeschein } = require("./mapping");
 const { fillAndSubmit } = require("./fill-form");
-const { getFormUrl } = require("./store");
+const { getFormUrl, appendLog, getTenantName } = require("./store");
+const { notifyError } = require("./notify");
 const adminRouter = require("./admin");
 
 const app = express();
@@ -23,12 +24,15 @@ async function processQueue() {
   working = true;
   while (queue.length > 0) {
     const job = queue.shift();
+    const who = `${job.data.mainGuest.firstName} ${job.data.mainGuest.lastName}`;
     try {
       const result = await fillAndSubmit(job.data, { dryRun: job.dryRun, formUrl: job.formUrl });
-      console.log(`[OK] Meldeschein eingereicht für ${job.data.mainGuest.lastName} (Reservierung ${job.reservationId})`, result);
+      console.log(`[OK] Meldeschein eingereicht für ${who} (Reservierung ${job.reservationId})`, result);
+      appendLog({ status: "ok", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who });
     } catch (err) {
       console.error(`[FEHLER] Reservierung ${job.reservationId}:`, err.message);
-      // TODO: Benachrichtigung (E-Mail/Slack), damit manuell nachgefasst werden kann
+      appendLog({ status: "error", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, error: err.message });
+      notifyError(`⚠️ Meldeschein FEHLGESCHLAGEN\nGast: ${who}\nReservierung: ${job.reservationId}\nTenant: ${job.tenantName}\nFehler: ${err.message}\n→ Bitte manuell im Meldewesen nachtragen.`);
     }
   }
   working = false;
@@ -52,6 +56,7 @@ app.post("/webhook/guest-guide-completed", (req, res) => {
   queue.push({
     data: mapped,
     formUrl,
+    tenantName: getTenantName(req.body.tenantId),
     reservationId: req.body.reservationId || "unbekannt",
     dryRun: req.query.dryRun === "1",
   });

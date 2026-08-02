@@ -54,4 +54,23 @@ function getFormUrl(tenantId) {
   return t.formUrl;
 }
 
-module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl };
+// ---- Aktivitätsprotokoll (letzte 100 Vorgänge) ----
+const LOGFILE = path.join(DATA_DIR, "log.json");
+
+function getLog() {
+  try { return JSON.parse(fs.readFileSync(LOGFILE, "utf8")); } catch (_) { return []; }
+}
+
+function appendLog(entry) {
+  const log = getLog();
+  log.unshift({ at: new Date().toISOString(), ...entry });
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(LOGFILE, JSON.stringify(log.slice(0, 100), null, 2));
+}
+
+function getTenantName(tenantId) {
+  const t = load()[tenantId];
+  return t ? t.name : tenantId;
+}
+
+module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl, getLog, appendLog, getTenantName };

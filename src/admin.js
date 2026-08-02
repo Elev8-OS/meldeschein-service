@@ -2,7 +2,7 @@
 // Benutzer: admin · Passwort: Railway-Variable ADMIN_PASSWORD
 const crypto = require("crypto");
 const express = require("express");
-const { getTenants, upsertTenant, deleteTenant } = require("./store");
+const { getTenants, upsertTenant, deleteTenant, getLog } = require("./store");
 
 const router = express.Router();
 
@@ -25,6 +25,8 @@ router.use((req, res, next) => {
 });
 
 router.get("/api/tenants", (_req, res) => res.json(getTenants()));
+
+router.get("/api/log", (_req, res) => res.json(getLog()));
 
 router.post("/api/tenants", (req, res) => {
   try {
@@ -72,6 +74,14 @@ router.get("/", (_req, res) => {
   .msg{margin-top:12px;font-size:13px}
   .msg.err{color:var(--danger)} .msg.ok{color:#1a7a3a}
   .empty{color:var(--muted);border:1px dashed var(--line);border-radius:12px;padding:24px;text-align:center}
+  .section-h{font-size:16px;margin:36px 0 12px}
+  .logrow{display:flex;gap:10px;align-items:baseline;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13px}
+  .logrow .st{flex:none;font-weight:600}
+  .logrow .st.ok{color:#1a7a3a} .logrow .st.error{color:var(--danger)}
+  .logrow .t{color:var(--muted);flex:none;white-space:nowrap}
+  .logrow .detail{min-width:0}
+  .logrow .errtext{color:var(--danger)}
+  .badge-dry{background:#eee;border-radius:5px;padding:0 6px;font-size:11px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -80,10 +90,13 @@ router.get("/", (_req, res) => {
   <p class="sub">Jeder Tenant mit seinem Quick-Check-in-Link. Der Webhook wird anhand der Tenant-ID zugeordnet.</p>
   <div id="list"></div>
 
+  <h2 class="section-h">Letzte Vorgänge</h2>
+  <div id="log"></div>
+
   <form id="form">
     <h2>Tenant anlegen oder ändern</h2>
     <label for="id">Tenant-ID (aus Elev8)</label>
-    <input id="id" required placeholder="z.B. TEN-SFLIVING">
+    <input id="id" required placeholder="z.B. 07fb916d-f901-4aa0-9c6e-a11d8d38d155">
     <label for="name">Name</label>
     <input id="name" placeholder="z.B. SF Living">
     <label for="formUrl">Quick-Check-in-Link</label>
@@ -96,12 +109,12 @@ router.get("/", (_req, res) => {
 <script>
 const msg = document.getElementById('msg');
 function betriebsnummer(u){ try { return new URL(u).searchParams.get('serviceProvider[0]') } catch(e){ return null } }
-function baseUrl(){ return location.href.endsWith('/') ? location.href : location.href + '/' }
+function baseUrl(){ return location.href.endsWith('/') ? location.href.split('?')[0] : location.href.split('?')[0] + '/' }
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) }
 async function loadTenants(){
   const t = await (await fetch(new URL('api/tenants', baseUrl()))).json();
   render(t);
 }
-function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) }
 function render(tenants){
   const list = document.getElementById('list');
   const ids = Object.keys(tenants);
@@ -132,7 +145,24 @@ document.getElementById('form').addEventListener('submit', async e => {
   msg.textContent = 'Gespeichert.'; msg.className='msg ok';
   e.target.reset(); render(data);
 });
+async function loadLog(){
+  const log = await (await fetch(new URL('api/log', baseUrl()))).json();
+  const el = document.getElementById('log');
+  if(!log.length){ el.innerHTML = '<div class="empty">Noch keine Vorgänge.</div>'; return }
+  el.innerHTML = log.slice(0, 30).map(e => {
+    const d = new Date(e.at);
+    const when = d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit'});
+    return '<div class="logrow">'
+      + '<span class="st ' + (e.status==='ok'?'ok':'error') + '">' + (e.status==='ok'?'OK':'Fehler') + '</span>'
+      + '<span class="t">' + when + '</span>'
+      + '<span class="detail">' + esc(e.guest || '') + ' · ' + esc(e.tenant || '') + ' · ' + esc(e.reservationId || '')
+      + (e.dryRun ? ' <span class="badge-dry">Testlauf</span>' : '')
+      + (e.error ? '<br><span class="errtext">' + esc(e.error) + '</span>' : '')
+      + '</span></div>';
+  }).join('');
+}
 loadTenants();
+loadLog();
 </script>
 </body>
 </html>`);
