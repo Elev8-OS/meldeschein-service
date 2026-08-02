@@ -8,7 +8,7 @@
 
 const { chromium } = require("playwright");
 
-async function fillAndSubmit(data, { dryRun = false, formUrl } = {}) {
+async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath } = {}) {
   if (!formUrl) throw new Error("formUrl fehlt");
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({
@@ -83,9 +83,13 @@ async function fillAndSubmit(data, { dryRun = false, formUrl } = {}) {
     // wurde bereits im Guest Guide eingeholt und dokumentiert)
     await page.check("#correctness-disclaimer");
 
+    // Beleg-Screenshot des ausgefüllten Formulars (vor dem Absenden)
+    if (screenshotPath) {
+      await page.screenshot({ fullPage: true, path: screenshotPath });
+    }
+
     if (dryRun) {
-      await page.screenshot({ fullPage: true, path: "/tmp/dryrun.png" });
-      return { submitted: false, dryRun: true, screenshot: "/tmp/dryrun.png" };
+      return { submitted: false, dryRun: true, screenshot: screenshotPath || null };
     }
 
     // Absenden

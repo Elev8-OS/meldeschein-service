@@ -2,7 +2,8 @@
 // Benutzer: admin · Passwort: Railway-Variable ADMIN_PASSWORD
 const crypto = require("crypto");
 const express = require("express");
-const { getTenants, upsertTenant, deleteTenant, getLog } = require("./store");
+const path = require("path");
+const { getTenants, upsertTenant, deleteTenant, getLog, SCREENSHOT_DIR } = require("./store");
 
 const router = express.Router();
 
@@ -27,6 +28,14 @@ router.use((req, res, next) => {
 router.get("/api/tenants", (_req, res) => res.json(getTenants()));
 
 router.get("/api/log", (_req, res) => res.json(getLog()));
+
+router.get("/screenshots/:file", (req, res) => {
+  const file = req.params.file;
+  if (!/^[A-Za-z0-9._-]+\.png$/.test(file)) return res.status(400).send("Ungültiger Dateiname.");
+  res.sendFile(path.join(SCREENSHOT_DIR, file), (err) => {
+    if (err) res.status(404).send("Screenshot nicht gefunden.");
+  });
+});
 
 router.post("/api/tenants", (req, res) => {
   try {
@@ -157,6 +166,7 @@ async function loadLog(){
       + '<span class="t">' + when + '</span>'
       + '<span class="detail">' + esc(e.guest || '') + ' · ' + esc(e.tenant || '') + ' · ' + esc(e.reservationId || '')
       + (e.dryRun ? ' <span class="badge-dry">Testlauf</span>' : '')
+      + (e.screenshot ? ' · <a href="' + new URL('screenshots/' + encodeURIComponent(e.screenshot), baseUrl()).pathname + '" target="_blank">Screenshot</a>' : '')
       + (e.error ? '<br><span class="errtext">' + esc(e.error) + '</span>' : '')
       + '</span></div>';
   }).join('');

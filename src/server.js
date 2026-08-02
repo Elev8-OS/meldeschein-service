@@ -4,7 +4,7 @@
 const express = require("express");
 const { mapGuestGuideToMeldeschein } = require("./mapping");
 const { fillAndSubmit } = require("./fill-form");
-const { getFormUrl, appendLog, getTenantName } = require("./store");
+const { getFormUrl, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath } = require("./store");
 const { notifyError } = require("./notify");
 const adminRouter = require("./admin");
 
@@ -13,6 +13,8 @@ app.use(express.json({ limit: "1mb" }));
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET; // in Railway als Variable setzen
 const PORT = process.env.PORT || 3000;
+// Wartezeiten zwischen internen Wiederholungsversuchen (Fehler bei Playwright/HTG-Seite)
+const RETRY_DELAYS_MS = (process.env.RETRY_DELAYS_MS || "120000,600000,1800000").split(",").map(Number);
 
 // Einfache In-Memory-Queue, damit Webhook sofort antwortet
 // und Playwright im Hintergrund läuft (nacheinander, nicht parallel).
@@ -26,13 +28,26 @@ async function processQueue() {
     const job = queue.shift();
     const who = `${job.data.mainGuest.firstName} ${job.data.mainGuest.lastName}`;
     try {
-      const result = await fillAndSubmit(job.data, { dryRun: job.dryRun, formUrl: job.formUrl });
+      const shotName = `${String(job.reservationId).replace(/[^A-Za-z0-9._-]/g, "_")}-${Date.now()}${job.dryRun ? "-testlauf" : ""}.png`;
+      const result = await fillAndSubmit(job.data, {
+        dryRun: job.dryRun,
+        formUrl: job.formUrl,
+        screenshotPath: screenshotPath(shotName),
+      });
+      if (!job.dryRun) markSubmitted(job.dedupeKey);
       console.log(`[OK] Meldeschein eingereicht für ${who} (Reservierung ${job.reservationId})`, result);
-      appendLog({ status: "ok", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who });
+      appendLog({ status: "ok", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, screenshot: shotName, attempt: job.attempt + 1 });
     } catch (err) {
-      console.error(`[FEHLER] Reservierung ${job.reservationId}:`, err.message);
-      appendLog({ status: "error", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, error: err.message });
-      notifyError(`⚠️ Meldeschein FEHLGESCHLAGEN\nGast: ${who}\nReservierung: ${job.reservationId}\nTenant: ${job.tenantName}\nFehler: ${err.message}\n→ Bitte manuell im Meldewesen nachtragen.`);
+      job.attempt = (job.attempt || 0) + 1;
+      if (job.attempt <= RETRY_DELAYS_MS.length) {
+        const delay = RETRY_DELAYS_MS[job.attempt - 1];
+        console.warn(`[RETRY] Reservierung ${job.reservationId}, Versuch ${job.attempt} fehlgeschlagen (${err.message}) – nächster Versuch in ${Math.round(delay / 60000)} min`);
+        setTimeout(() => { queue.push(job); processQueue(); }, delay);
+      } else {
+        console.error(`[FEHLER] Reservierung ${job.reservationId} endgültig fehlgeschlagen:`, err.message);
+        appendLog({ status: "error", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, error: err.message, attempt: job.attempt });
+        notifyError(`⚠️ Meldeschein FEHLGESCHLAGEN (nach ${job.attempt} Versuchen)\nGast: ${who}\nReservierung: ${job.reservationId}\nTenant: ${job.tenantName}\nFehler: ${err.message}\n→ Bitte manuell im Meldewesen nachtragen.`);
+      }
     }
   }
   working = false;
@@ -53,12 +68,22 @@ app.post("/webhook/guest-guide-completed", (req, res) => {
     return res.status(400).json({ error: "invalid payload", detail: err.message });
   }
 
+  // Duplikat-Schutz: gleiche Reservierung + Revision nicht zweimal einreichen
+  const dryRun = req.query.dryRun === "1";
+  const dedupeKey = `${req.body.reservationId || "unbekannt"}:${req.body.revision || 1}`;
+  if (!dryRun && isSubmitted(dedupeKey)) {
+    console.log(`[DUPLIKAT] ${dedupeKey} bereits eingereicht – übersprungen`);
+    return res.status(200).json({ status: "duplicate", detail: "already submitted" });
+  }
+
   queue.push({
     data: mapped,
     formUrl,
+    dedupeKey,
+    attempt: 0,
     tenantName: getTenantName(req.body.tenantId),
     reservationId: req.body.reservationId || "unbekannt",
-    dryRun: req.query.dryRun === "1",
+    dryRun,
   });
   processQueue();
 

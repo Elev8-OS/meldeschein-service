@@ -73,4 +73,27 @@ function getTenantName(tenantId) {
   return t ? t.name : tenantId;
 }
 
-module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl, getLog, appendLog, getTenantName };
+// ---- Duplikat-Schutz: bereits eingereichte Meldescheine ----
+const SUBMITTEDFILE = path.join(DATA_DIR, "submitted.json");
+
+function isSubmitted(key) {
+  try { return JSON.parse(fs.readFileSync(SUBMITTEDFILE, "utf8")).includes(key); } catch (_) { return false; }
+}
+
+function markSubmitted(key) {
+  let list = [];
+  try { list = JSON.parse(fs.readFileSync(SUBMITTEDFILE, "utf8")); } catch (_) {}
+  if (!list.includes(key)) list.push(key);
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(SUBMITTEDFILE, JSON.stringify(list.slice(-5000), null, 2));
+}
+
+// ---- Screenshot-Archiv ----
+const SCREENSHOT_DIR = path.join(DATA_DIR, "screenshots");
+
+function screenshotPath(name) {
+  fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+  return path.join(SCREENSHOT_DIR, name);
+}
+
+module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl, getLog, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, SCREENSHOT_DIR };
