@@ -1,9 +1,12 @@
-// Fehler-Benachrichtigung an eine Webhook-URL (Railway-Variable NOTIFY_WEBHOOK_URL).
-// Kompatibel mit Slack Incoming Webhooks, Discord (Slack-Modus) und Make.com-Webhooks:
+// Fehler-Benachrichtigung an eine Webhook-URL.
+// Quelle: Admin-Einstellungen (settings.json), Fallback Railway-Variable NOTIFY_WEBHOOK_URL.
+// Kompatibel mit Make.com-Webhooks, Slack Incoming Webhooks und Discord (Slack-Modus):
 // es wird ein JSON { text: "..." } gePOSTet.
 
+const { getNotifyUrl } = require("./store");
+
 async function notifyError(text) {
-  const url = process.env.NOTIFY_WEBHOOK_URL;
+  const url = getNotifyUrl();
   if (!url) return;
   try {
     await fetch(url, {

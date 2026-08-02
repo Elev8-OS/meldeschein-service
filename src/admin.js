@@ -3,7 +3,7 @@
 const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
-const { getTenants, upsertTenant, deleteTenant, getLog, SCREENSHOT_DIR } = require("./store");
+const { getTenants, upsertTenant, deleteTenant, getLog, SCREENSHOT_DIR, getSettings, saveSettings, getNotifyUrl } = require("./store");
 
 const router = express.Router();
 
@@ -28,6 +28,35 @@ router.use((req, res, next) => {
 router.get("/api/tenants", (_req, res) => res.json(getTenants()));
 
 router.get("/api/log", (_req, res) => res.json(getLog()));
+
+router.get("/api/settings", (_req, res) => {
+  res.json({ notifyWebhookUrl: getSettings().notifyWebhookUrl || "", envFallback: !!process.env.NOTIFY_WEBHOOK_URL });
+});
+
+router.post("/api/settings", (req, res) => {
+  try {
+    const { notifyWebhookUrl } = req.body || {};
+    saveSettings({ notifyWebhookUrl: String(notifyWebhookUrl || "").trim() });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post("/api/settings/test-notify", async (_req, res) => {
+  const url = getNotifyUrl();
+  if (!url) return res.status(400).json({ error: "Keine Webhook-URL hinterlegt." });
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "✅ Testnachricht vom Meldeschein-Service – Benachrichtigungen funktionieren." }),
+    });
+    res.json({ ok: r.ok, status: r.status });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
 
 router.get("/screenshots/:file", (req, res) => {
   const file = req.params.file;
@@ -102,6 +131,16 @@ router.get("/", (_req, res) => {
   <h2 class="section-h">Letzte Vorgänge</h2>
   <div id="log"></div>
 
+  <form id="settingsForm">
+    <h2>Fehler-Benachrichtigung</h2>
+    <label for="notifyUrl">Make-Webhook-URL (bei fehlgeschlagenen Meldescheinen)</label>
+    <input id="notifyUrl" placeholder="https://hook.eu1.make.com/...">
+    <p class="hint">Wird bei jedem endgültig fehlgeschlagenen Meldeschein aufgerufen (POST, JSON: { "text": "..." }). Funktioniert auch mit Slack- oder Discord-Webhooks. Leer lassen = keine Benachrichtigung.</p>
+    <p class="msg" id="settingsMsg"></p>
+    <button class="primary" type="submit">Speichern</button>
+    <button type="button" id="testNotify">Testnachricht senden</button>
+  </form>
+
   <form id="form">
     <h2>Tenant anlegen oder ändern</h2>
     <label for="id">Tenant-ID (aus Elev8)</label>
@@ -171,8 +210,30 @@ async function loadLog(){
       + '</span></div>';
   }).join('');
 }
+const settingsMsg = document.getElementById('settingsMsg');
+async function loadSettings(){
+  const s = await (await fetch(new URL('api/settings', baseUrl()))).json();
+  document.getElementById('notifyUrl').value = s.notifyWebhookUrl || '';
+  if(!s.notifyWebhookUrl && s.envFallback){ settingsMsg.textContent = 'Aktuell aktiv: URL aus Railway-Variable. Ein hier gespeicherter Wert hat Vorrang.'; settingsMsg.className='msg'; }
+}
+document.getElementById('settingsForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  settingsMsg.textContent=''; settingsMsg.className='msg';
+  const r = await fetch(new URL('api/settings', baseUrl()), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ notifyWebhookUrl: document.getElementById('notifyUrl').value.trim() })});
+  const data = await r.json();
+  if(!r.ok){ settingsMsg.textContent = data.error || 'Speichern fehlgeschlagen.'; settingsMsg.className='msg err'; return }
+  settingsMsg.textContent = 'Gespeichert.'; settingsMsg.className='msg ok';
+});
+document.getElementById('testNotify').addEventListener('click', async () => {
+  settingsMsg.textContent='Sende Testnachricht…'; settingsMsg.className='msg';
+  const r = await fetch(new URL('api/settings/test-notify', baseUrl()), {method:'POST'});
+  const data = await r.json();
+  if(!r.ok || !data.ok){ settingsMsg.textContent = 'Test fehlgeschlagen: ' + (data.error || 'Status ' + data.status); settingsMsg.className='msg err'; return }
+  settingsMsg.textContent = 'Testnachricht gesendet (Status ' + data.status + ') – prüfe dein Make-Szenario.'; settingsMsg.className='msg ok';
+});
 loadTenants();
 loadLog();
+loadSettings();
 </script>
 </body>
 </html>`);

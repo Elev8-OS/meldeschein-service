@@ -96,4 +96,28 @@ function screenshotPath(name) {
   return path.join(SCREENSHOT_DIR, name);
 }
 
-module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl, getLog, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, SCREENSHOT_DIR };
+// ---- Einstellungen (z.B. Benachrichtigungs-Webhook) ----
+const SETTINGSFILE = path.join(DATA_DIR, "settings.json");
+
+function getSettings() {
+  try { return JSON.parse(fs.readFileSync(SETTINGSFILE, "utf8")); } catch (_) { return {}; }
+}
+
+function saveSettings(patch) {
+  const cur = getSettings();
+  const next = { ...cur, ...patch };
+  if (next.notifyWebhookUrl) {
+    let u;
+    try { u = new URL(next.notifyWebhookUrl); } catch (_) { throw new Error("Ungültige Webhook-URL."); }
+    if (u.protocol !== "https:") throw new Error("Die Webhook-URL muss mit https:// beginnen.");
+  }
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(SETTINGSFILE, JSON.stringify(next, null, 2));
+  return next;
+}
+
+function getNotifyUrl() {
+  return getSettings().notifyWebhookUrl || process.env.NOTIFY_WEBHOOK_URL || "";
+}
+
+module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl, getLog, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, SCREENSHOT_DIR, getSettings, saveSettings, getNotifyUrl };
