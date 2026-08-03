@@ -126,6 +126,35 @@ async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath, er
     }
     await page.waitForTimeout(300);
 
+    // Reisedaten: ebenfalls eigene Datepicker-Komponente – sichtbare Felder direkt setzen.
+    // Alle Zeilen mit "Ankunft/Abreise"-Label (Hauptgast + Mitreisende, gleiche Daten).
+    const dateResult = await page.evaluate((d) => {
+      function setNative(el, val) {
+        el.value = val;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      function german(iso) { const [y, m, day] = iso.split("-"); return `${day}.${m}.${y}`; }
+      const rows = [];
+      document.querySelectorAll("label").forEach((l) => {
+        if (!/Ankunft/i.test(l.textContent || "")) return;
+        const row = l.closest(".row") || l.parentElement;
+        if (!row) return;
+        const inputs = Array.from(row.querySelectorAll("input")).filter((i) => i.type !== "checkbox" && i.type !== "hidden");
+        if (inputs.length >= 2) {
+          setNative(inputs[0], german(d.stay.fromDate));
+          setNative(inputs[1], german(d.stay.toDate));
+          rows.push(inputs.length);
+        }
+      });
+      return { rows: rows.length };
+    }, data);
+    console.log("[REISEDATEN]", JSON.stringify(dateResult));
+    if (!dateResult.rows) {
+      throw new Error("Reisedaten-Felder (Ankunft/Abreise) nicht gefunden – Formular-Aufbau geändert?");
+    }
+    await page.waitForTimeout(300);
+
     // Bestätigungs-Checkbox (Richtigkeit der Daten – Zustimmung des Gastes
     // wurde bereits im Guest Guide eingeholt und dokumentiert)
     await page.check("#correctness-disclaimer");
@@ -139,8 +168,25 @@ async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath, er
       return { submitted: false, dryRun: true, screenshot: screenshotPath || null };
     }
 
-    // Absenden
-    await page.click('form button[type="submit"]');
+    // Zustand prüfen: Checkbox gesetzt? Speichern-Button aktiv?
+    const submitState = await page.evaluate(() => {
+      const cb = document.getElementById("correctness-disclaimer");
+      const form = cb ? cb.closest("form") : null;
+      const btn = form ? form.querySelector('button[type="submit"]') : null;
+      return { checkboxChecked: !!(cb && cb.checked), buttonDisabled: !!(btn && btn.disabled), buttonFound: !!btn };
+    });
+    console.log("[SUBMIT-STATE]", JSON.stringify(submitState));
+    if (!submitState.checkboxChecked) {
+      await page.check("#correctness-disclaimer");
+    }
+    if (submitState.buttonDisabled) {
+      // Button per Label-Klick freischalten (falls Styling-Checkbox das native Event braucht)
+      await page.click('label[for="correctness-disclaimer"]').catch(() => {});
+      await page.waitForTimeout(300);
+    }
+
+    // Absenden – gezielt der Speichern-Button im Quick-Check-in-Formular
+    await page.click('form:has(#correctness-disclaimer) button[type="submit"]');
 
     // Erfolg ODER Fehlermeldung der Seite abwarten
     const outcome = await Promise.race([
