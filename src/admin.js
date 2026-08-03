@@ -73,6 +73,21 @@ router.post("/api/settings/test-notify", async (_req, res) => {
   }
 });
 
+router.get("/api/screenshots", (_req, res) => {
+  const fsmod = require("fs");
+  try {
+    const files = fsmod.readdirSync(SCREENSHOT_DIR)
+      .filter((f) => f.endsWith(".png"))
+      .map((f) => ({ file: f, mtime: fsmod.statSync(path.join(SCREENSHOT_DIR, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 50)
+      .map((x) => ({ file: x.file, at: new Date(x.mtime).toISOString(), url: "/admin/screenshots/" + encodeURIComponent(x.file) }));
+    res.json(files);
+  } catch (_) {
+    res.json([]);
+  }
+});
+
 router.get("/screenshots/:file", (req, res) => {
   const file = req.params.file;
   if (!/^[A-Za-z0-9._-]+\.png$/.test(file)) return res.status(400).send("Invalid file name.");
