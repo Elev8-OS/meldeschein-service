@@ -4,7 +4,8 @@
 const express = require("express");
 const { mapGuestGuideToMeldeschein } = require("./mapping");
 const { fillAndSubmit } = require("./fill-form");
-const { getFormUrl, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath } = require("./store");
+const fs = require("fs");
+const { getFormUrl, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, getResultCallbackUrl } = require("./store");
 const { notifyError } = require("./notify");
 const adminRouter = require("./admin");
 
@@ -36,6 +37,10 @@ async function processQueue() {
       });
       if (!job.dryRun) markSubmitted(job.dedupeKey);
       console.log(`[OK] Meldeschein eingereicht für ${who} (Reservierung ${job.reservationId})`, result);
+      // Ergebnis + Beleg-Screenshot zurück an Elev8 (falls Callback-URL hinterlegt)
+      if (!job.dryRun) {
+        sendResultCallback(job, shotName).catch((e) => console.error("[CALLBACK-FEHLER]", e.message));
+      }
       appendLog({ status: "ok", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, screenshot: shotName, attempt: job.attempt + 1 });
     } catch (err) {
       job.attempt = (job.attempt || 0) + 1;
@@ -51,6 +56,29 @@ async function processQueue() {
     }
   }
   working = false;
+}
+
+async function sendResultCallback(job, shotName) {
+  const url = getResultCallbackUrl();
+  if (!url) return;
+  let screenshotBase64 = null;
+  try {
+    screenshotBase64 = "data:image/png;base64," + fs.readFileSync(screenshotPath(shotName)).toString("base64");
+  } catch (_) {}
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-webhook-secret": WEBHOOK_SECRET },
+    body: JSON.stringify({
+      event: "meldeschein.submitted",
+      reservationId: job.reservationId,
+      tenantId: job.tenantId,
+      status: "submitted",
+      submittedAt: new Date().toISOString(),
+      screenshot: screenshotBase64,
+    }),
+  });
+  if (!r.ok) throw new Error(`Callback-Status ${r.status}`);
+  console.log(`[CALLBACK] Ergebnis für ${job.reservationId} an Elev8 gesendet`);
 }
 
 app.post("/webhook/guest-guide-completed", (req, res) => {
@@ -81,6 +109,7 @@ app.post("/webhook/guest-guide-completed", (req, res) => {
     formUrl,
     dedupeKey,
     attempt: 0,
+    tenantId: req.body.tenantId,
     tenantName: getTenantName(req.body.tenantId),
     reservationId: req.body.reservationId || "unbekannt",
     dryRun,

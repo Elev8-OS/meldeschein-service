@@ -106,10 +106,12 @@ function getSettings() {
 function saveSettings(patch) {
   const cur = getSettings();
   const next = { ...cur, ...patch };
-  if (next.notifyWebhookUrl) {
-    let u;
-    try { u = new URL(next.notifyWebhookUrl); } catch (_) { throw new Error("Ungültige Webhook-URL."); }
-    if (u.protocol !== "https:") throw new Error("Die Webhook-URL muss mit https:// beginnen.");
+  for (const key of ["notifyWebhookUrl", "resultCallbackUrl"]) {
+    if (next[key]) {
+      let u;
+      try { u = new URL(next[key]); } catch (_) { throw new Error("Ungültige URL bei " + key + "."); }
+      if (u.protocol !== "https:") throw new Error("Die URL muss mit https:// beginnen (" + key + ").");
+    }
   }
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(SETTINGSFILE, JSON.stringify(next, null, 2));
@@ -120,4 +122,36 @@ function getNotifyUrl() {
   return getSettings().notifyWebhookUrl || process.env.NOTIFY_WEBHOOK_URL || "";
 }
 
-module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl, getLog, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, SCREENSHOT_DIR, getSettings, saveSettings, getNotifyUrl };
+function getResultCallbackUrl() {
+  return getSettings().resultCallbackUrl || "";
+}
+
+// ---- Admin-Passwort: Hash aus Einstellungen hat Vorrang vor Railway-Variable ----
+const crypto = require("crypto");
+
+function hashPassword(pw, salt) {
+  return crypto.scryptSync(String(pw), salt, 64).toString("hex");
+}
+
+function setAdminPassword(newPassword) {
+  if (!newPassword || String(newPassword).length < 12) {
+    throw new Error("Das neue Passwort muss mindestens 12 Zeichen lang sein.");
+  }
+  const salt = crypto.randomBytes(16).toString("hex");
+  saveSettings({ adminPasswordSalt: salt, adminPasswordHash: hashPassword(newPassword, salt) });
+}
+
+function verifyAdminPassword(pw) {
+  const st = getSettings();
+  if (st.adminPasswordHash && st.adminPasswordSalt) {
+    const candidate = Buffer.from(hashPassword(pw, st.adminPasswordSalt), "hex");
+    const stored = Buffer.from(st.adminPasswordHash, "hex");
+    return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
+  }
+  const envPw = process.env.ADMIN_PASSWORD;
+  if (!envPw) return false;
+  const a = Buffer.from(String(pw)), b = Buffer.from(String(envPw));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl, getLog, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, SCREENSHOT_DIR, getSettings, saveSettings, getNotifyUrl, getResultCallbackUrl, setAdminPassword, verifyAdminPassword };

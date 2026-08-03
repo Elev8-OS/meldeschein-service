@@ -1,9 +1,9 @@
 // Admin-Bereich: /admin — geschützt per Login (Basic Auth).
-// Benutzer: admin · Passwort: Railway-Variable ADMIN_PASSWORD
+// Benutzer: admin · Passwort: geändert im UI (Hash in settings.json), Fallback Railway-Variable ADMIN_PASSWORD
 const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
-const { getTenants, upsertTenant, deleteTenant, getLog, SCREENSHOT_DIR, getSettings, saveSettings, getNotifyUrl } = require("./store");
+const { getTenants, upsertTenant, deleteTenant, getLog, SCREENSHOT_DIR, getSettings, saveSettings, getNotifyUrl, verifyAdminPassword, setAdminPassword } = require("./store");
 
 const router = express.Router();
 
@@ -13,16 +13,30 @@ function safeEqual(a, b) {
 }
 
 router.use((req, res, next) => {
-  const pw = process.env.ADMIN_PASSWORD;
-  if (!pw) return res.status(503).send("ADMIN_PASSWORD ist nicht gesetzt (Railway-Variable).");
   const header = req.get("authorization") || "";
   const [scheme, encoded] = header.split(" ");
   if (scheme === "Basic" && encoded) {
-    const [user, pass] = Buffer.from(encoded, "base64").toString().split(":");
-    if (safeEqual(user, "admin") && safeEqual(pass, pw)) return next();
+    const decoded = Buffer.from(encoded, "base64").toString();
+    const idx = decoded.indexOf(":");
+    const user = decoded.slice(0, idx), pass = decoded.slice(idx + 1);
+    if (safeEqual(user, "admin") && verifyAdminPassword(pass)) return next();
   }
   res.set("WWW-Authenticate", 'Basic realm="Meldeschein Admin", charset="UTF-8"');
   res.status(401).send("Anmeldung erforderlich.");
+});
+
+// Passwort ändern (aktuelles Passwort erforderlich)
+router.post("/api/change-password", (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!verifyAdminPassword(String(currentPassword || ""))) {
+      return res.status(400).json({ error: "Aktuelles Passwort ist falsch." });
+    }
+    setAdminPassword(String(newPassword || ""));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 router.get("/api/tenants", (_req, res) => res.json(getTenants()));
@@ -30,13 +44,14 @@ router.get("/api/tenants", (_req, res) => res.json(getTenants()));
 router.get("/api/log", (_req, res) => res.json(getLog()));
 
 router.get("/api/settings", (_req, res) => {
-  res.json({ notifyWebhookUrl: getSettings().notifyWebhookUrl || "", envFallback: !!process.env.NOTIFY_WEBHOOK_URL });
+  const st = getSettings();
+  res.json({ notifyWebhookUrl: st.notifyWebhookUrl || "", resultCallbackUrl: st.resultCallbackUrl || "", envFallback: !!process.env.NOTIFY_WEBHOOK_URL });
 });
 
 router.post("/api/settings", (req, res) => {
   try {
-    const { notifyWebhookUrl } = req.body || {};
-    saveSettings({ notifyWebhookUrl: String(notifyWebhookUrl || "").trim() });
+    const { notifyWebhookUrl, resultCallbackUrl } = req.body || {};
+    saveSettings({ notifyWebhookUrl: String(notifyWebhookUrl || "").trim(), resultCallbackUrl: String(resultCallbackUrl || "").trim() });
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -132,13 +147,29 @@ router.get("/", (_req, res) => {
   <div id="log"></div>
 
   <form id="settingsForm">
-    <h2>Fehler-Benachrichtigung</h2>
+    <h2>Fehler-Benachrichtigung &amp; Callback</h2>
     <label for="notifyUrl">Make-Webhook-URL (bei fehlgeschlagenen Meldescheinen)</label>
     <input id="notifyUrl" placeholder="https://hook.eu1.make.com/...">
     <p class="hint">Wird bei jedem endgültig fehlgeschlagenen Meldeschein aufgerufen (POST, JSON: { "text": "..." }). Funktioniert auch mit Slack- oder Discord-Webhooks. Leer lassen = keine Benachrichtigung.</p>
+    <label for="callbackUrl">Elev8-Callback-URL (Ergebnis + Screenshot zurück an Elev8)</label>
+    <input id="callbackUrl" placeholder="https://api.elev8-suite.com/...">
+    <p class="hint">Nach jedem erfolgreich eingereichten Meldeschein sendet der Service ein POST mit reservationId, tenantId, Status und dem Beleg-Screenshot (Base64-PNG) an diese URL. Authentifiziert mit demselben x-webhook-secret. Leer lassen = kein Callback.</p>
     <p class="msg" id="settingsMsg"></p>
     <button class="primary" type="submit">Speichern</button>
     <button type="button" id="testNotify">Testnachricht senden</button>
+  </form>
+
+  <form id="pwForm">
+    <h2>Admin-Passwort ändern</h2>
+    <label for="pwCurrent">Aktuelles Passwort</label>
+    <input id="pwCurrent" type="password" required autocomplete="current-password">
+    <label for="pwNew">Neues Passwort (mind. 12 Zeichen)</label>
+    <input id="pwNew" type="password" required minlength="12" autocomplete="new-password">
+    <label for="pwNew2">Neues Passwort wiederholen</label>
+    <input id="pwNew2" type="password" required autocomplete="new-password">
+    <p class="hint">Notfall-Reset: Datei settings.json auf dem Railway-Volume löschen, dann gilt wieder das Railway-Passwort.</p>
+    <p class="msg" id="pwMsg"></p>
+    <button class="primary" type="submit">Passwort ändern</button>
   </form>
 
   <form id="form">
@@ -214,12 +245,13 @@ const settingsMsg = document.getElementById('settingsMsg');
 async function loadSettings(){
   const s = await (await fetch(new URL('api/settings', baseUrl()))).json();
   document.getElementById('notifyUrl').value = s.notifyWebhookUrl || '';
+  document.getElementById('callbackUrl').value = s.resultCallbackUrl || '';
   if(!s.notifyWebhookUrl && s.envFallback){ settingsMsg.textContent = 'Aktuell aktiv: URL aus Railway-Variable. Ein hier gespeicherter Wert hat Vorrang.'; settingsMsg.className='msg'; }
 }
 document.getElementById('settingsForm').addEventListener('submit', async e => {
   e.preventDefault();
   settingsMsg.textContent=''; settingsMsg.className='msg';
-  const r = await fetch(new URL('api/settings', baseUrl()), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ notifyWebhookUrl: document.getElementById('notifyUrl').value.trim() })});
+  const r = await fetch(new URL('api/settings', baseUrl()), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ notifyWebhookUrl: document.getElementById('notifyUrl').value.trim(), resultCallbackUrl: document.getElementById('callbackUrl').value.trim() })});
   const data = await r.json();
   if(!r.ok){ settingsMsg.textContent = data.error || 'Speichern fehlgeschlagen.'; settingsMsg.className='msg err'; return }
   settingsMsg.textContent = 'Gespeichert.'; settingsMsg.className='msg ok';
@@ -230,6 +262,19 @@ document.getElementById('testNotify').addEventListener('click', async () => {
   const data = await r.json();
   if(!r.ok || !data.ok){ settingsMsg.textContent = 'Test fehlgeschlagen: ' + (data.error || 'Status ' + data.status); settingsMsg.className='msg err'; return }
   settingsMsg.textContent = 'Testnachricht gesendet (Status ' + data.status + ') – prüfe dein Make-Szenario.'; settingsMsg.className='msg ok';
+});
+const pwMsg = document.getElementById('pwMsg');
+document.getElementById('pwForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  pwMsg.textContent=''; pwMsg.className='msg';
+  const cur = document.getElementById('pwCurrent').value;
+  const n1 = document.getElementById('pwNew').value, n2 = document.getElementById('pwNew2').value;
+  if(n1 !== n2){ pwMsg.textContent = 'Die neuen Passwörter stimmen nicht überein.'; pwMsg.className='msg err'; return }
+  const r = await fetch(new URL('api/change-password', baseUrl()), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ currentPassword: cur, newPassword: n1 })});
+  const data = await r.json();
+  if(!r.ok){ pwMsg.textContent = data.error || 'Ändern fehlgeschlagen.'; pwMsg.className='msg err'; return }
+  pwMsg.textContent = 'Passwort geändert. Beim nächsten Laden mit dem neuen Passwort anmelden.'; pwMsg.className='msg ok';
+  e.target.reset();
 });
 loadTenants();
 loadLog();
