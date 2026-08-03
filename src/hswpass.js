@@ -140,10 +140,10 @@ function personFields(p, i, { main = false, mainEmail = "" } = {}) {
   return f;
 }
 
-function nowStamp() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+// Tramino läuft auf deutscher Zeit – Container-UTC wäre 2h in der Vergangenheit
+// und löst den Konflikt-Schutz aus ("zwischenzeitlich gespeichert").
+function nowStampBerlin() {
+  return new Date().toLocaleString("sv-SE", { timeZone: "Europe/Berlin" }).replace("T", " ").slice(0, 19);
 }
 
 async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = {}) {
@@ -197,6 +197,12 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   }
   const checkinNr = nrMatch[1];
 
+  // Der Server bettet seinen eigenen Zeitstempel als data_loaded ins Formular ein –
+  // genau dieser Wert muss beim Speichern zurückgesendet werden (Konflikt-Schutz).
+  const dlMatch = createResp.match(/name=\\?"?data_loaded\\?"?[^>]*value=\\?"?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+  const dataLoaded = dlMatch ? dlMatch[1] : nowStampBerlin();
+  console.log(`[HSW] Self-Checkin ${checkinNr} angelegt (data_loaded=${dataLoaded}${dlMatch ? "" : " – Fallback Berlin-Zeit"})`);
+
   // 3) meldeschein-save – ALLES in einem einzigen Speichervorgang
   // (Personendaten + Datenschutz + Unterschrift). Zwei getrennte Saves in
   // derselben Sekunde lösen Traminos Konflikt-Schutz aus ("zwischenzeitlich
@@ -209,7 +215,7 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
     Object.assign(finalFields, personFields(c, idx + 2));
   });
   finalFields.datenschutz = 3;
-  finalFields.data_loaded = nowStamp();
+  finalFields.data_loaded = dataLoaded;
   finalFields.signature = signatureImage;
   finalFields.lat = "";
   finalFields.lng = "";
