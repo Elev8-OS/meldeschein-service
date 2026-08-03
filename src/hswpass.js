@@ -57,26 +57,57 @@ async function postSave(fields) {
   try {
     const j = JSON.parse(text);
     if (typeof j.content === "string") return j.content;
-    return JSON.stringify(j);
+    return JSON.stringify(j.content || j);
   } catch (_) {
     return text;
   }
 }
 
-async function initSession(setPass) {
-  const clientSession = newSessionId();
-  const url = `${API_BASE}/api/app/?dashboard=&set_pass=${encodeURIComponent(setPass)}&set_pass_done=1&session=${clientSession}`;
-  const r = await fetch(url, { headers: COMMON_HEADERS });
+async function fetchApp(query) {
+  const r = await fetch(`${API_BASE}/api/app/${query}`, { headers: COMMON_HEADERS });
   const text = await r.text();
   if (!r.ok) throw new Error(`HSW Pass: HTTP ${r.status} on session init`);
   let j = {};
   try { j = JSON.parse(text); } catch (_) {}
-  const session = j.session || clientSession;
   const html = typeof j.content === "string" ? j.content : text;
-  const dashboard = j.start_dashboard_id || (html.match(/data-dashboard=\\?"?(\d+)/) || [])[1];
-  const block = (html.match(/data-gs-id=\\?"?(\d+)/) || [])[1];
-  if (!dashboard || !block) throw new Error("HSW Pass: dashboard/block id not found — page layout may have changed");
-  return { session, dashboard: String(dashboard), block: String(block) };
+  return { j, html, text };
+}
+
+function extractIds(j, html) {
+  const dashboard =
+    j.start_dashboard_id ||
+    (html.match(/data-dashboard=\\?"?(\d+)/) || [])[1] ||
+    (html.match(/data-load-dashboard=\\?"?(\d+)/) || [])[1] ||
+    (html.match(/app_reload=(\d+)/) || [])[1];
+  const block =
+    (html.match(/data-gs-id=\\?"?(\d+)/) || [])[1] ||
+    (html.match(/grid-stack-item-(\d+)/) || [])[1] ||
+    (html.match(/elements_(\d+)/) || [])[1];
+  return { dashboard, block };
+}
+
+async function initSession(setPass) {
+  // Wie die Web-App: erster Aufruf etabliert Session + set_pass,
+  // zweiter Aufruf (set_pass_done=1) lädt das eigentliche Dashboard.
+  const clientSession = newSessionId();
+  const tok = encodeURIComponent(setPass);
+
+  const r1 = await fetchApp(`?dashboard=&set_pass=${tok}&session=${clientSession}`);
+  let session = r1.j.session || clientSession;
+  let ids = extractIds(r1.j, r1.html);
+
+  if (!ids.dashboard || !ids.block) {
+    const r2 = await fetchApp(`?dashboard=&set_pass=${tok}&set_pass_done=1&session=${session}`);
+    session = r2.j.session || session;
+    const ids2 = extractIds(r2.j, r2.html);
+    ids = { dashboard: ids.dashboard || ids2.dashboard, block: ids.block || ids2.block };
+    if (!ids.dashboard || !ids.block) {
+      const snippet = (r2.text || "").replace(/\s+/g, " ").slice(0, 300);
+      throw new Error(`HSW Pass: dashboard/block id not found (dashboard=${ids.dashboard || "-"}, block=${ids.block || "-"}). Response starts: ${snippet}`);
+    }
+  }
+  console.log(`[HSW] Session ok (dashboard=${ids.dashboard}, block=${ids.block})`);
+  return { session, dashboard: String(ids.dashboard), block: String(ids.block) };
 }
 
 function personFields(p, i, { main = false, mainEmail = "" } = {}) {
