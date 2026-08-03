@@ -8,7 +8,7 @@
 
 const { chromium } = require("playwright");
 
-async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath } = {}) {
+async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath, errorScreenshotPath } = {}) {
   if (!formUrl) throw new Error("formUrl fehlt");
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({
@@ -142,12 +142,37 @@ async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath } =
     // Absenden
     await page.click('form button[type="submit"]');
 
-    // Erfolg: Erfolgsmeldung des ViewModels erscheint
-    await page.waitForSelector(".quick-check-in-success-msg", { timeout: 30000 });
-    return { submitted: true };
+    // Erfolg ODER Fehlermeldung der Seite abwarten
+    const outcome = await Promise.race([
+      page.waitForSelector(".quick-check-in-success-msg", { timeout: 30000 }).then(() => ({ ok: true })),
+      page.waitForSelector(".alert-danger", { timeout: 30000 }).then(async (el) => ({ ok: false, serverMsg: ((await el.textContent()) || "").trim() })),
+    ]).catch(() => null);
+
+    if (outcome && outcome.ok) return { submitted: true };
+
+    // Validierungsfehler der Seite einsammeln (Parsley)
+    const validationErrors = await page.evaluate(() => {
+      const msgs = new Set();
+      document.querySelectorAll(".parsley-errors-list li").forEach((li) => {
+        const t = (li.textContent || "").trim();
+        if (t) msgs.add(t);
+      });
+      const alert = document.querySelector(".alert-danger");
+      if (alert) msgs.add((alert.textContent || "").trim());
+      return Array.from(msgs);
+    }).catch(() => []);
+
+    const detail = outcome && outcome.serverMsg
+      ? `Server-Meldung: ${outcome.serverMsg}`
+      : validationErrors.length
+        ? `Validierung blockiert: ${validationErrors.join(" | ")}`
+        : "Keine Erfolgsmeldung erschienen (Grund unbekannt).";
+    throw new Error(detail);
   } catch (err) {
-    // Screenshot für Fehleranalyse
-    try { await page.screenshot({ fullPage: true, path: `/tmp/error-${Date.now()}.png` }); } catch (_) {}
+    // Screenshot für Fehleranalyse (im Archiv, im Admin-Protokoll verlinkt)
+    if (errorScreenshotPath) {
+      try { await page.screenshot({ fullPage: true, path: errorScreenshotPath }); } catch (_) {}
+    }
     throw err;
   } finally {
     await browser.close();

@@ -28,12 +28,15 @@ async function processQueue() {
   while (queue.length > 0) {
     const job = queue.shift();
     const who = `${job.data.mainGuest.firstName} ${job.data.mainGuest.lastName}`;
+    const baseName = `${String(job.reservationId).replace(/[^A-Za-z0-9._-]/g, "_")}-${Date.now()}${job.dryRun ? "-testlauf" : ""}`;
+    const shotName = `${baseName}.png`;
+    const errShotName = `${baseName}-fehler.png`;
     try {
-      const shotName = `${String(job.reservationId).replace(/[^A-Za-z0-9._-]/g, "_")}-${Date.now()}${job.dryRun ? "-testlauf" : ""}.png`;
       const result = await fillAndSubmit(job.data, {
         dryRun: job.dryRun,
         formUrl: job.formUrl,
         screenshotPath: screenshotPath(shotName),
+        errorScreenshotPath: screenshotPath(errShotName),
       });
       if (!job.dryRun) markSubmitted(job.dedupeKey);
       console.log(`[OK] Meldeschein eingereicht für ${who} (Reservierung ${job.reservationId})`, result);
@@ -50,7 +53,7 @@ async function processQueue() {
         setTimeout(() => { queue.push(job); processQueue(); }, delay);
       } else {
         console.error(`[FEHLER] Reservierung ${job.reservationId} endgültig fehlgeschlagen:`, err.message);
-        appendLog({ status: "error", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, error: err.message, attempt: job.attempt });
+        appendLog({ status: "error", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, error: err.message, attempt: job.attempt, screenshot: fs.existsSync(screenshotPath(errShotName)) ? errShotName : undefined });
         notifyError(`⚠️ Meldeschein FEHLGESCHLAGEN (nach ${job.attempt} Versuchen)\nGast: ${who}\nReservierung: ${job.reservationId}\nTenant: ${job.tenantName}\nFehler: ${err.message}\n→ Bitte manuell im Meldewesen nachtragen.`);
       }
     }
