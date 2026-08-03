@@ -127,7 +127,8 @@ function personFields(p, i, { main = false, mainEmail = "" } = {}) {
     [`geburt_${i}_visible`]: toVisibleDate(p.birthDate),
     [`nationalitaet_${i}`]: p.nationality.toLowerCase(),
     [`reisepass_${i}`]: p.identificationNumber || "",
-    [`email_${i}`]: main ? mainEmail : "",
+    // Begleiter ohne eigene E-Mail: Kontakt-Adresse des Hauptgastes eintragen
+    [`email_${i}`]: p.email || mainEmail || "",
   };
   if (main) {
     const { strasse, hausnr } = splitStreet(p.address.street);
@@ -212,7 +213,7 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   const personData = {};
   Object.assign(personData, personFields(m, 1, { main: true, mainEmail: m.email }));
   data.companions.forEach((c, idx) => {
-    Object.assign(personData, personFields(c, idx + 2));
+    Object.assign(personData, personFields(c, idx + 2, { mainEmail: m.email }));
   });
 
   const saveResp = await postSave({
@@ -253,8 +254,10 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   const problem = /Es ist ein Problem|ergänze die fehlenden/i.test(finalText);
   if (!saved || problem) {
     const idx = finalText.search(/ergänze die fehlenden|fehlende/i);
-    const detailPart = idx >= 0 ? ` | Fehlend-Abschnitt: ${finalText.slice(idx, idx + 400)}` : "";
-    throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed. Response: ${finalText.slice(0, 250)}${detailPart}`);
+    const detailPart = idx >= 0 ? ` | Fehlend-Abschnitt: ${finalText.slice(idx, idx + 350)}` : "";
+    const p2idx = finalText.search(/Person 2/i);
+    const p2Part = p2idx >= 0 ? ` | Person 2: ${finalText.slice(p2idx, p2idx + 250)}` : "";
+    throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed. Response: ${finalText.slice(0, 200)}${detailPart}${p2Part}`);
   }
   return { submitted: true, checkinNr };
 }
