@@ -15,6 +15,15 @@ function isoDate(value, fieldName) {
   return s;
 }
 
+// Geburtsdatum muss in der Vergangenheit liegen (und nach 1900)
+function birthDate(value, fieldName) {
+  const s = isoDate(value, fieldName);
+  const today = new Date().toISOString().slice(0, 10);
+  if (s >= today) throw new Error(`Implausible birth date in ${fieldName}: ${s} (must be in the past — check the Guest Guide date-of-birth field)`);
+  if (s < "1900-01-01") throw new Error(`Implausible birth date in ${fieldName}: ${s}`);
+  return s;
+}
+
 // Formular erwartet: 'passport' | 'identityCard'
 function mapIdType(t) {
   if (!t) return "passport";
@@ -27,7 +36,7 @@ function mapPerson(p, prefix, { main = false } = {}) {
   const person = {
     firstName: required(p.firstName, `${prefix}.firstName`),
     lastName: required(p.lastName, `${prefix}.lastName`),
-    birthDate: isoDate(p.birthDate, `${prefix}.birthDate`),
+    birthDate: birthDate(p.birthDate, `${prefix}.birthDate`),
     nationality: required(p.nationality, `${prefix}.nationality`).toUpperCase(), // ISO-2, z.B. DE
     identificationType: mapIdType(p.idType),
     identificationNumber: p.idNumber || "",
