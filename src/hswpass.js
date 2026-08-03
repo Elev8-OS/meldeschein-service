@@ -216,9 +216,13 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   // 4) ... dann Abschluss mit Datenschutz + Unterschrift
   const finalFields = { ...detailFields, datenschutz: 3, data_loaded: nowStamp(), signature: signatureImage };
   const finalResp = await postSave(finalFields);
-  if (!finalResp.includes("loadDashboard")) {
-    const finalText = finalResp.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300);
-    throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed. Response: ${finalText}`);
+  const finalText = finalResp.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  // Erfolg: entweder Dashboard-Reload (wie im Browser-Mitschnitt) oder die
+  // neu gerenderte Meldeschein-Seite mit Speicher-Bestätigung ("zwischenzeitlich gespeichert").
+  const saved = finalResp.includes("loadDashboard") || /zwischenzeitlich gespeichert|wurde gespeichert/i.test(finalText);
+  const problem = /Es ist ein Problem/i.test(finalText);
+  if (!saved || problem) {
+    throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed. Response: ${finalText.slice(0, 300)}`);
   }
   return { submitted: true, checkinNr };
 }
