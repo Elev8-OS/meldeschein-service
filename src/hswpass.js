@@ -197,24 +197,22 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   }
   const checkinNr = nrMatch[1];
 
-  // 3) meldeschein-save – erst Personendaten (wie die App beim Tippen speichert) ...
-  const detailFields = { ...common, button_action: "meldeschein-save" };
-  Object.assign(detailFields, personFields(m, 1, { main: true, mainEmail: m.email }));
+  // 3) meldeschein-save – ALLES in einem einzigen Speichervorgang
+  // (Personendaten + Datenschutz + Unterschrift). Zwei getrennte Saves in
+  // derselben Sekunde lösen Traminos Konflikt-Schutz aus ("zwischenzeitlich
+  // gespeichert" / "Bitte ergänze die fehlenden Angaben") und verwerfen Daten.
+  // Kurze Pause nach dem Anlegen, damit data_loaded sicher NACH dem create liegt.
+  await new Promise((r) => setTimeout(r, 1500));
+  const finalFields = { ...common, button_action: "meldeschein-save" };
+  Object.assign(finalFields, personFields(m, 1, { main: true, mainEmail: m.email }));
   data.companions.forEach((c, idx) => {
-    Object.assign(detailFields, personFields(c, idx + 2));
+    Object.assign(finalFields, personFields(c, idx + 2));
   });
-  detailFields.data_loaded = nowStamp();
-  detailFields.signature = "";
-  detailFields.lat = "";
-  detailFields.lng = "";
-  const saveResp = await postSave(detailFields);
-  const saveText = saveResp.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-  if (/Es ist ein Problem|keine Geräte-UUID/i.test(saveText)) {
-    throw new Error(`HSW Pass: data save for Self-Checkin ${checkinNr} rejected: ${saveText.slice(0, 250)}`);
-  }
-
-  // 4) ... dann Abschluss mit Datenschutz + Unterschrift
-  const finalFields = { ...detailFields, datenschutz: 3, data_loaded: nowStamp(), signature: signatureImage };
+  finalFields.datenschutz = 3;
+  finalFields.data_loaded = nowStamp();
+  finalFields.signature = signatureImage;
+  finalFields.lat = "";
+  finalFields.lng = "";
   const finalResp = await postSave(finalFields);
   const finalText = finalResp
     .replace(/<[^>]+>/g, " ")
@@ -223,7 +221,7 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   // Erfolg: entweder Dashboard-Reload (wie im Browser-Mitschnitt) oder die
   // neu gerenderte Meldeschein-Seite mit Speicher-Bestätigung ("... gespeichert").
   const saved = finalResp.includes("loadDashboard") || (/gespeichert/i.test(finalText) && !/nicht gespeichert/i.test(finalText));
-  const problem = /Es ist ein Problem/i.test(finalText);
+  const problem = /Es ist ein Problem|ergänze die fehlenden/i.test(finalText);
   if (!saved || problem) {
     throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed. Response: ${finalText.slice(0, 300)}`);
   }
