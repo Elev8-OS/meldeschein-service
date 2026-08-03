@@ -162,11 +162,15 @@ async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath, er
       return Array.from(msgs);
     }).catch(() => []);
 
+    let pageSnippet = "";
+    try {
+      pageSnippet = await page.evaluate(() => (document.body.innerText || "").replace(/\s+/g, " ").slice(0, 300));
+    } catch (_) {}
     const detail = outcome && outcome.serverMsg
       ? `Server-Meldung: ${outcome.serverMsg}`
       : validationErrors.length
         ? `Validierung blockiert: ${validationErrors.join(" | ")}`
-        : "Keine Erfolgsmeldung erschienen (Grund unbekannt).";
+        : `Keine Erfolgsmeldung erschienen. Seiteninhalt: ${pageSnippet}`;
     throw new Error(detail);
   } catch (err) {
     // Screenshot für Fehleranalyse (im Archiv, im Admin-Protokoll verlinkt)
