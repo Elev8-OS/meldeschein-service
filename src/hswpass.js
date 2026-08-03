@@ -140,6 +140,12 @@ function personFields(p, i, { main = false, mainEmail = "" } = {}) {
   return f;
 }
 
+// data_loaded aus einer Formular-Antwort lesen (Server bettet seinen Zeitstempel ein)
+function extractDataLoaded(html) {
+  const m = html.match(/name=\\?"?data_loaded\\?"?[^>]*value=\\?"?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : null;
+}
+
 // Tramino läuft auf deutscher Zeit – Container-UTC wäre 2h in der Vergangenheit
 // und löst den Konflikt-Schutz aus ("zwischenzeitlich gespeichert").
 function nowStampBerlin() {
@@ -197,29 +203,46 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   }
   const checkinNr = nrMatch[1];
 
-  // Der Server bettet seinen eigenen Zeitstempel als data_loaded ins Formular ein –
-  // genau dieser Wert muss beim Speichern zurückgesendet werden (Konflikt-Schutz).
-  const dlMatch = createResp.match(/name=\\?"?data_loaded\\?"?[^>]*value=\\?"?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
-  const dataLoaded = dlMatch ? dlMatch[1] : nowStampBerlin();
-  console.log(`[HSW] Self-Checkin ${checkinNr} angelegt (data_loaded=${dataLoaded}${dlMatch ? "" : " – Fallback Berlin-Zeit"})`);
+  // Der Server bettet seinen Zeitstempel als data_loaded ins Formular ein –
+  // dieser Wert muss beim jeweils NÄCHSTEN Speichern zurückgesendet werden.
+  const dl1 = extractDataLoaded(createResp) || nowStampBerlin();
+  console.log(`[HSW] Self-Checkin ${checkinNr} angelegt (data_loaded=${dl1})`);
 
-  // 3) meldeschein-save – ALLES in einem einzigen Speichervorgang
-  // (Personendaten + Datenschutz + Unterschrift). Zwei getrennte Saves in
-  // derselben Sekunde lösen Traminos Konflikt-Schutz aus ("zwischenzeitlich
-  // gespeichert" / "Bitte ergänze die fehlenden Angaben") und verwerfen Daten.
-  // Kurze Pause nach dem Anlegen, damit data_loaded sicher NACH dem create liegt.
-  await new Promise((r) => setTimeout(r, 1500));
-  const finalFields = { ...common, button_action: "meldeschein-save" };
-  Object.assign(finalFields, personFields(m, 1, { main: true, mainEmail: m.email }));
+  // 3) Personendaten speichern – exakt wie die Web-App (mit dl aus dem create)
+  const personData = {};
+  Object.assign(personData, personFields(m, 1, { main: true, mainEmail: m.email }));
   data.companions.forEach((c, idx) => {
-    Object.assign(finalFields, personFields(c, idx + 2));
+    Object.assign(personData, personFields(c, idx + 2));
   });
-  finalFields.datenschutz = 3;
-  finalFields.data_loaded = dataLoaded;
-  finalFields.signature = signatureImage;
-  finalFields.lat = "";
-  finalFields.lng = "";
-  const finalResp = await postSave(finalFields);
+
+  const saveResp = await postSave({
+    ...common,
+    button_action: "meldeschein-save",
+    ...personData,
+    data_loaded: dl1,
+    signature: "",
+    lat: "",
+    lng: "",
+  });
+  const saveText = saveResp.replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/gi, " ").replace(/\s+/g, " ");
+  if (/Es ist ein Problem|zwischenzeitlich gespeichert/i.test(saveText)) {
+    throw new Error(`HSW Pass: data save for Self-Checkin ${checkinNr} rejected: ${saveText.slice(0, 250)}`);
+  }
+  // Frischen Zeitstempel aus der Save-Antwort für den Abschluss übernehmen
+  const dl2 = extractDataLoaded(saveResp) || dl1;
+  console.log(`[HSW] Daten gespeichert (data_loaded=${dl2})`);
+
+  // 4) Abschluss: Datenschutz + Unterschrift (mit dl aus der Save-Antwort)
+  const finalResp = await postSave({
+    ...common,
+    button_action: "meldeschein-save",
+    ...personData,
+    datenschutz: 3,
+    data_loaded: dl2,
+    signature: signatureImage,
+    lat: "",
+    lng: "",
+  });
   const finalText = finalResp
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;|&#160;/gi, " ")
@@ -229,7 +252,9 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   const saved = finalResp.includes("loadDashboard") || (/gespeichert/i.test(finalText) && !/nicht gespeichert/i.test(finalText));
   const problem = /Es ist ein Problem|ergänze die fehlenden/i.test(finalText);
   if (!saved || problem) {
-    throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed. Response: ${finalText.slice(0, 300)}`);
+    const idx = finalText.search(/ergänze die fehlenden|fehlende/i);
+    const detailPart = idx >= 0 ? ` | Fehlend-Abschnitt: ${finalText.slice(idx, idx + 400)}` : "";
+    throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed. Response: ${finalText.slice(0, 250)}${detailPart}`);
   }
   return { submitted: true, checkinNr };
 }
