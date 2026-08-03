@@ -1,5 +1,5 @@
 // Admin-Bereich: /admin — geschützt per Login (Basic Auth).
-// Benutzer: admin · Passwort: Railway-Variable ADMIN_PASSWORD
+// Benutzer: admin · Passwort: geändert im UI (Hash in settings.json), Fallback Railway-Variable ADMIN_PASSWORD
 const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
@@ -83,8 +83,8 @@ router.get("/screenshots/:file", (req, res) => {
 
 router.post("/api/tenants", (req, res) => {
   try {
-    const { id, name, formUrl } = req.body || {};
-    res.json(upsertTenant(id, { name, formUrl }));
+    const { id, name, formUrl, hswPassUrl } = req.body || {};
+    res.json(upsertTenant(id, { name, formUrl, hswPassUrl }));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -181,6 +181,9 @@ router.get("/", (_req, res) => {
     <label for="formUrl">Quick check-in link</label>
     <input id="formUrl" required placeholder="https://shop.hochschwarzwald.de/de/registration/guestcard/genericquickcheckin/?serviceProvider...">
     <p class="hint">Copy it from the property\u2019s Meldewesen account (\u201cLink erzeugen\u201d). It contains the registration number and partner key.</p>
+    <label for="hswUrl">HSW Pass link (optional, second registration system)</label>
+    <input id="hswUrl" placeholder="https://www.hswpass.de/?set_pass=...">
+    <p class="hint">The tenant\u2019s hswpass.de link containing the set_pass token. If set, every registration is also submitted to HSW Pass (Tramino) with the guest\u2019s signature.</p>
     <p class="msg" id="msg"></p>
     <button class="primary" type="submit">Save</button>
   </form>
@@ -204,6 +207,7 @@ function render(tenants){
       + '<div class="name">' + esc(t.name) + '</div>'
       + '<div class="tid">' + esc(id) + '</div>'
       + (bn ? '<span class="betrieb">Reg. no. ' + esc(bn) + '</span>' : '')
+      + (t.hswPassUrl ? ' <span class="betrieb">HSW Pass \u2713</span>' : '')
       + '<div class="url">' + esc(t.formUrl) + '</div>'
       + '</div><button class="del" data-id="' + esc(id) + '">Delete</button></div>';
   }).join('');
@@ -217,7 +221,7 @@ async function removeTenant(id){
 document.getElementById('form').addEventListener('submit', async e => {
   e.preventDefault();
   msg.textContent=''; msg.className='msg';
-  const body = { id: document.getElementById('id').value.trim(), name: document.getElementById('name').value.trim(), formUrl: document.getElementById('formUrl').value.trim() };
+  const body = { id: document.getElementById('id').value.trim(), name: document.getElementById('name').value.trim(), formUrl: document.getElementById('formUrl').value.trim(), hswPassUrl: document.getElementById('hswUrl').value.trim() };
   const r = await fetch(new URL('api/tenants', baseUrl()), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
   const data = await r.json();
   if(!r.ok){ msg.textContent = data.error || 'Saving failed.'; msg.className='msg err'; return }
@@ -234,7 +238,7 @@ async function loadLog(){
     return '<div class="logrow">'
       + '<span class="st ' + (e.status==='ok'?'ok':'error') + '">' + (e.status==='ok'?'OK':'Error') + '</span>'
       + '<span class="t">' + when + '</span>'
-      + '<span class="detail">' + esc(e.guest || '') + ' · ' + esc(e.tenant || '') + ' · ' + esc(e.reservationId || '')
+      + '<span class="detail">' + (e.channel ? '<strong>' + (e.channel === 'hsw' ? 'HSW Pass' : 'HTG') + '</strong> · ' : '') + esc(e.guest || '') + ' · ' + esc(e.tenant || '') + ' · ' + esc(e.reservationId || '') + (e.checkinNr ? ' · Self-Checkin #' + esc(e.checkinNr) : '')
       + (e.dryRun ? ' <span class="badge-dry">Test run</span>' : '')
       + (e.screenshot ? ' · <a href="' + new URL('screenshots/' + encodeURIComponent(e.screenshot), baseUrl()).pathname + '" target="_blank">Screenshot</a>' : '')
       + (e.error ? '<br><span class="errtext">' + esc(e.error) + '</span>' : '')

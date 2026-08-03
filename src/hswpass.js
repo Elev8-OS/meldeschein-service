@@ -43,28 +43,40 @@ function splitStreet(street) {
 }
 
 async function postSave(fields) {
-  const body = new URLSearchParams();
+  // Der echte Browser sendet multipart/form-data – FormData übernimmt Boundary & Header
+  const body = new FormData();
   for (const [k, v] of Object.entries(fields)) body.append(k, v == null ? "" : String(v));
   const r = await fetch(`${API_BASE}/api/dashboard/save/`, {
     method: "POST",
-    headers: { ...COMMON_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
+    headers: COMMON_HEADERS,
+    body,
   });
   const text = await r.text();
   if (!r.ok) throw new Error(`HSW Pass: HTTP ${r.status} on save (${fields.button_action})`);
-  return text;
+  // Antwort ist JSON { content: "<html...>" }
+  try {
+    const j = JSON.parse(text);
+    if (typeof j.content === "string") return j.content;
+    return JSON.stringify(j);
+  } catch (_) {
+    return text;
+  }
 }
 
 async function initSession(setPass) {
-  const session = newSessionId();
-  const url = `${API_BASE}/api/app/?dashboard=&set_pass=${encodeURIComponent(setPass)}&set_pass_done=1&session=${session}`;
+  const clientSession = newSessionId();
+  const url = `${API_BASE}/api/app/?dashboard=&set_pass=${encodeURIComponent(setPass)}&set_pass_done=1&session=${clientSession}`;
   const r = await fetch(url, { headers: COMMON_HEADERS });
   const text = await r.text();
   if (!r.ok) throw new Error(`HSW Pass: HTTP ${r.status} on session init`);
-  const dm = text.match(/data-load-dashboard=\\?"?(\d+)/);
-  const bm = text.match(/data-gs-id=\\?"?(\d+)/);
-  if (!dm || !bm) throw new Error("HSW Pass: dashboard/block id not found — page layout may have changed");
-  return { session, dashboard: dm[1], block: bm[1] };
+  let j = {};
+  try { j = JSON.parse(text); } catch (_) {}
+  const session = j.session || clientSession;
+  const html = typeof j.content === "string" ? j.content : text;
+  const dashboard = j.start_dashboard_id || (html.match(/data-dashboard=\\?"?(\d+)/) || [])[1];
+  const block = (html.match(/data-gs-id=\\?"?(\d+)/) || [])[1];
+  if (!dashboard || !block) throw new Error("HSW Pass: dashboard/block id not found — page layout may have changed");
+  return { session, dashboard: String(dashboard), block: String(block) };
 }
 
 function personFields(p, i, { main = false, mainEmail = "" } = {}) {
@@ -124,12 +136,9 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
 
   // 1) check – prüft die Angaben, erstellt noch nichts
   const checkResp = await postSave({ ...common, button_action: "check", ...basics });
-  if (!/wrap_headline/.test(checkResp)) {
-    throw new Error("HSW Pass: check step returned an unexpected response");
-  }
-  const checkError = checkResp.match(/class=\\?"notification[^>]*>\\?n?([^<]{5,200})</);
-  if (/alert|error/i.test(checkResp.slice(0, 2000)) && checkError) {
-    throw new Error(`HSW Pass check rejected: ${checkError[1].trim()}`);
+  const checkText = checkResp.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  if (!/check|prüf/i.test(checkText)) {
+    throw new Error(`HSW Pass: check step returned an unexpected response: ${checkText.slice(0, 200)}`);
   }
 
   if (dryRun) {
