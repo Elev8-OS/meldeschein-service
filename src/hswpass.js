@@ -197,21 +197,28 @@ async function submitHswPass(data, { hswUrl, dryRun = false, signatureImage } = 
   }
   const checkinNr = nrMatch[1];
 
-  // 3) meldeschein-save – alle Details + Datenschutz + Unterschrift
+  // 3) meldeschein-save – erst Personendaten (wie die App beim Tippen speichert) ...
   const detailFields = { ...common, button_action: "meldeschein-save" };
   Object.assign(detailFields, personFields(m, 1, { main: true, mainEmail: m.email }));
   data.companions.forEach((c, idx) => {
     Object.assign(detailFields, personFields(c, idx + 2));
   });
-  detailFields.datenschutz = 3;
   detailFields.data_loaded = nowStamp();
-  detailFields.signature = signatureImage;
+  detailFields.signature = "";
   detailFields.lat = "";
   detailFields.lng = "";
+  const saveResp = await postSave(detailFields);
+  const saveText = saveResp.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  if (/Es ist ein Problem|keine Geräte-UUID/i.test(saveText)) {
+    throw new Error(`HSW Pass: data save for Self-Checkin ${checkinNr} rejected: ${saveText.slice(0, 250)}`);
+  }
 
-  const finalResp = await postSave(detailFields);
+  // 4) ... dann Abschluss mit Datenschutz + Unterschrift
+  const finalFields = { ...detailFields, datenschutz: 3, data_loaded: nowStamp(), signature: signatureImage };
+  const finalResp = await postSave(finalFields);
   if (!finalResp.includes("loadDashboard")) {
-    throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed`);
+    const finalText = finalResp.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300);
+    throw new Error(`HSW Pass: final save for Self-Checkin ${checkinNr} was not confirmed. Response: ${finalText}`);
   }
   return { submitted: true, checkinNr };
 }
