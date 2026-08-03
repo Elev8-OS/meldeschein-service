@@ -6,11 +6,18 @@
 const crypto = require("crypto");
 
 const API_BASE = "https://hochschwarzwald.tramino.de";
+// Geräte-UUID: Tramino verlangt eine Geräte-Kennung ("keine Geräte-UUID"-Fehler sonst).
+// Die Web-App sendet den Header x-tramino-app; der Server erlaubt zusätzlich x-tramino-uuid.
+// Eine stabile UUID pro Service-Instanz verhält sich wie ein wiederkehrendes Gerät.
+const DEVICE_UUID = crypto.randomUUID();
+
 const COMMON_HEADERS = {
   Origin: "https://www.hswpass.de",
   Referer: "https://www.hswpass.de/",
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+  "x-tramino-app": "Capacitor",
+  "x-tramino-uuid": DEVICE_UUID,
 };
 
 function newSessionId() {
@@ -92,12 +99,12 @@ async function initSession(setPass) {
   const clientSession = newSessionId();
   const tok = encodeURIComponent(setPass);
 
-  const r1 = await fetchApp(`?dashboard=&set_pass=${tok}&session=${clientSession}`);
+  const r1 = await fetchApp(`?dashboard=&set_pass=${tok}&session=${clientSession}&app_version=browser`);
   let session = r1.j.session || clientSession;
   let ids = extractIds(r1.j, r1.html);
 
   if (!ids.dashboard || !ids.block) {
-    const r2 = await fetchApp(`?dashboard=&set_pass=${tok}&set_pass_done=1&session=${session}`);
+    const r2 = await fetchApp(`?dashboard=&set_pass=${tok}&set_pass_done=1&session=${session}&app_version=browser`);
     session = r2.j.session || session;
     const ids2 = extractIds(r2.j, r2.html);
     ids = { dashboard: ids.dashboard || ids2.dashboard, block: ids.block || ids2.block };
