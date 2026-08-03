@@ -4,14 +4,14 @@
 
 function required(value, fieldName) {
   if (value === undefined || value === null || value === "") {
-    throw new Error(`Pflichtfeld fehlt: ${fieldName}`);
+    throw new Error(`Missing required field: ${fieldName}`);
   }
   return value;
 }
 
 function isoDate(value, fieldName) {
   const s = String(required(value, fieldName)).slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error(`Ungültiges Datum in ${fieldName}: ${value}`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error(`Invalid date in ${fieldName}: ${value}`);
   return s;
 }
 
@@ -35,7 +35,7 @@ function mapPerson(p, prefix, { main = false } = {}) {
   };
   // Ausweisnummer ist Pflicht für alle Nationalitäten AUSSER DE
   if (person.nationality !== "DE" && !person.identificationNumber) {
-    throw new Error(`${prefix}: Ausweisnummer ist Pflicht bei Nationalität ${person.nationality}`);
+    throw new Error(`${prefix}: ID number is required for nationality ${person.nationality}`);
   }
   if (main) {
     person.email = required(p.email, `${prefix}.email`);

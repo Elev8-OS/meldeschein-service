@@ -1,5 +1,5 @@
 // Admin-Bereich: /admin — geschützt per Login (Basic Auth).
-// Benutzer: admin · Passwort: geändert im UI (Hash in settings.json), Fallback Railway-Variable ADMIN_PASSWORD
+// Benutzer: admin · Passwort: Railway-Variable ADMIN_PASSWORD
 const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
@@ -22,7 +22,7 @@ router.use((req, res, next) => {
     if (safeEqual(user, "admin") && verifyAdminPassword(pass)) return next();
   }
   res.set("WWW-Authenticate", 'Basic realm="Meldeschein Admin", charset="UTF-8"');
-  res.status(401).send("Anmeldung erforderlich.");
+  res.status(401).send("Authentication required.");
 });
 
 // Passwort ändern (aktuelles Passwort erforderlich)
@@ -30,7 +30,7 @@ router.post("/api/change-password", (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
     if (!verifyAdminPassword(String(currentPassword || ""))) {
-      return res.status(400).json({ error: "Aktuelles Passwort ist falsch." });
+      return res.status(400).json({ error: "Current password is incorrect." });
     }
     setAdminPassword(String(newPassword || ""));
     res.json({ ok: true });
@@ -60,12 +60,12 @@ router.post("/api/settings", (req, res) => {
 
 router.post("/api/settings/test-notify", async (_req, res) => {
   const url = getNotifyUrl();
-  if (!url) return res.status(400).json({ error: "Keine Webhook-URL hinterlegt." });
+  if (!url) return res.status(400).json({ error: "No webhook URL configured." });
   try {
     const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "✅ Testnachricht vom Meldeschein-Service – Benachrichtigungen funktionieren." }),
+      body: JSON.stringify({ text: "✅ Test message from the registration service – notifications are working." }),
     });
     res.json({ ok: r.ok, status: r.status });
   } catch (err) {
@@ -75,9 +75,9 @@ router.post("/api/settings/test-notify", async (_req, res) => {
 
 router.get("/screenshots/:file", (req, res) => {
   const file = req.params.file;
-  if (!/^[A-Za-z0-9._-]+\.png$/.test(file)) return res.status(400).send("Ungültiger Dateiname.");
+  if (!/^[A-Za-z0-9._-]+\.png$/.test(file)) return res.status(400).send("Invalid file name.");
   res.sendFile(path.join(SCREENSHOT_DIR, file), (err) => {
-    if (err) res.status(404).send("Screenshot nicht gefunden.");
+    if (err) res.status(404).send("Screenshot not found.");
   });
 });
 
@@ -94,11 +94,11 @@ router.delete("/api/tenants/:id", (req, res) => res.json(deleteTenant(req.params
 
 router.get("/", (_req, res) => {
   res.type("html").send(`<!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Meldeschein · Betriebe</title>
+<title>Registration Service · Properties</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet">
 <style>
@@ -139,56 +139,56 @@ router.get("/", (_req, res) => {
 </head>
 <body>
 <div class="wrap">
-  <h1>Meldeschein-Betriebe</h1>
-  <p class="sub">Jeder Tenant mit seinem Quick-Check-in-Link. Der Webhook wird anhand der Tenant-ID zugeordnet.</p>
+  <h1>Registration Tenants</h1>
+  <p class="sub">Each tenant with its quick check-in link. Incoming webhooks are routed by tenant ID.</p>
   <div id="list"></div>
 
-  <h2 class="section-h">Letzte Vorgänge</h2>
+  <h2 class="section-h">Recent activity</h2>
   <div id="log"></div>
 
   <form id="settingsForm">
-    <h2>Fehler-Benachrichtigung &amp; Callback</h2>
-    <label for="notifyUrl">Make-Webhook-URL (bei fehlgeschlagenen Meldescheinen)</label>
+    <h2>Error notification &amp; callback</h2>
+    <label for="notifyUrl">Make webhook URL (called on failed registrations)</label>
     <input id="notifyUrl" placeholder="https://hook.eu1.make.com/...">
-    <p class="hint">Wird bei jedem endgültig fehlgeschlagenen Meldeschein aufgerufen (POST, JSON: { "text": "..." }). Funktioniert auch mit Slack- oder Discord-Webhooks. Leer lassen = keine Benachrichtigung.</p>
-    <label for="callbackUrl">Elev8-Callback-URL (Ergebnis + Screenshot zurück an Elev8)</label>
+    <p class="hint">Called for every registration that has permanently failed (POST, JSON: { "text": "..." }). Also works with Slack or Discord webhooks. Leave empty to disable notifications.</p>
+    <label for="callbackUrl">Elev8 callback URL (result + screenshot back to Elev8)</label>
     <input id="callbackUrl" placeholder="https://api.elev8-suite.com/...">
-    <p class="hint">Nach jedem erfolgreich eingereichten Meldeschein sendet der Service ein POST mit reservationId, tenantId, Status und dem Beleg-Screenshot (Base64-PNG) an diese URL. Authentifiziert mit demselben x-webhook-secret. Leer lassen = kein Callback.</p>
+    <p class="hint">After every successfully submitted registration, the service sends a POST with reservationId, tenantId, status and the proof screenshot (base64 PNG) to this URL. Authenticated with the same x-webhook-secret. Leave empty to disable.</p>
     <p class="msg" id="settingsMsg"></p>
-    <button class="primary" type="submit">Speichern</button>
-    <button type="button" id="testNotify">Testnachricht senden</button>
+    <button class="primary" type="submit">Save</button>
+    <button type="button" id="testNotify">Send test message</button>
   </form>
 
   <form id="pwForm">
-    <h2>Admin-Passwort ändern</h2>
-    <label for="pwCurrent">Aktuelles Passwort</label>
+    <h2>Change admin password</h2>
+    <label for="pwCurrent">Current password</label>
     <input id="pwCurrent" type="password" required autocomplete="current-password">
-    <label for="pwNew">Neues Passwort (mind. 12 Zeichen)</label>
+    <label for="pwNew">New password (min. 12 characters)</label>
     <input id="pwNew" type="password" required minlength="12" autocomplete="new-password">
-    <label for="pwNew2">Neues Passwort wiederholen</label>
+    <label for="pwNew2">Repeat new password</label>
     <input id="pwNew2" type="password" required autocomplete="new-password">
-    <p class="hint">Notfall-Reset: Datei settings.json auf dem Railway-Volume löschen, dann gilt wieder das Railway-Passwort.</p>
+    <p class="hint">Emergency reset: delete settings.json on the Railway volume, then the Railway password applies again.</p>
     <p class="msg" id="pwMsg"></p>
-    <button class="primary" type="submit">Passwort ändern</button>
+    <button class="primary" type="submit">Change password</button>
   </form>
 
   <form id="form">
-    <h2>Tenant anlegen oder ändern</h2>
-    <label for="id">Tenant-ID (aus Elev8)</label>
-    <input id="id" required placeholder="z.B. 07fb916d-f901-4aa0-9c6e-a11d8d38d155">
+    <h2>Add or update tenant</h2>
+    <label for="id">Tenant ID (from Elev8)</label>
+    <input id="id" required placeholder="e.g. 07fb916d-f901-4aa0-9c6e-a11d8d38d155">
     <label for="name">Name</label>
-    <input id="name" placeholder="z.B. SF Living">
-    <label for="formUrl">Quick-Check-in-Link</label>
+    <input id="name" placeholder="e.g. SF Living">
+    <label for="formUrl">Quick check-in link</label>
     <input id="formUrl" required placeholder="https://shop.hochschwarzwald.de/de/registration/guestcard/genericquickcheckin/?serviceProvider...">
-    <p class="hint">Im Meldewesen der Unterkunft unter „Link erzeugen“ kopieren. Enthält Betriebsnummer und Partner-Kennung.</p>
+    <p class="hint">Copy it from the property\u2019s Meldewesen account (\u201cLink erzeugen\u201d). It contains the registration number and partner key.</p>
     <p class="msg" id="msg"></p>
-    <button class="primary" type="submit">Speichern</button>
+    <button class="primary" type="submit">Save</button>
   </form>
 </div>
 <script>
 const msg = document.getElementById('msg');
 function betriebsnummer(u){ try { return new URL(u).searchParams.get('serviceProvider[0]') } catch(e){ return null } }
-function baseUrl(){ return location.href.endsWith('/') ? location.href.split('?')[0] : location.href.split('?')[0] + '/' }
+function baseUrl(){ return location.href.endsWith('/') ? location.href : location.href + '/' }
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) }
 async function loadTenants(){
   const t = await (await fetch(new URL('api/tenants', baseUrl()))).json();
@@ -197,20 +197,20 @@ async function loadTenants(){
 function render(tenants){
   const list = document.getElementById('list');
   const ids = Object.keys(tenants);
-  if(!ids.length){ list.innerHTML = '<div class="empty">Noch keine Tenants angelegt. Unten den ersten hinzufügen.</div>'; return }
+  if(!ids.length){ list.innerHTML = '<div class="empty">No tenants yet. Add the first one below.</div>'; return }
   list.innerHTML = ids.map(id => {
     const t = tenants[id], bn = betriebsnummer(t.formUrl);
     return '<div class="tenant"><span class="dot"></span><div class="info">'
       + '<div class="name">' + esc(t.name) + '</div>'
       + '<div class="tid">' + esc(id) + '</div>'
-      + (bn ? '<span class="betrieb">Betriebsnr. ' + esc(bn) + '</span>' : '')
+      + (bn ? '<span class="betrieb">Reg. no. ' + esc(bn) + '</span>' : '')
       + '<div class="url">' + esc(t.formUrl) + '</div>'
-      + '</div><button class="del" data-id="' + esc(id) + '">Löschen</button></div>';
+      + '</div><button class="del" data-id="' + esc(id) + '">Delete</button></div>';
   }).join('');
   list.querySelectorAll('button.del').forEach(b => b.addEventListener('click', () => removeTenant(b.dataset.id)));
 }
 async function removeTenant(id){
-  if(!confirm('Tenant „' + id + '“ wirklich löschen?')) return;
+  if(!confirm('Really delete tenant \u201c' + id + '\u201d?')) return;
   const t = await (await fetch(new URL('api/tenants/' + encodeURIComponent(id), baseUrl()), {method:'DELETE'})).json();
   render(t);
 }
@@ -220,22 +220,22 @@ document.getElementById('form').addEventListener('submit', async e => {
   const body = { id: document.getElementById('id').value.trim(), name: document.getElementById('name').value.trim(), formUrl: document.getElementById('formUrl').value.trim() };
   const r = await fetch(new URL('api/tenants', baseUrl()), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
   const data = await r.json();
-  if(!r.ok){ msg.textContent = data.error || 'Speichern fehlgeschlagen.'; msg.className='msg err'; return }
-  msg.textContent = 'Gespeichert.'; msg.className='msg ok';
+  if(!r.ok){ msg.textContent = data.error || 'Saving failed.'; msg.className='msg err'; return }
+  msg.textContent = 'Saved.'; msg.className='msg ok';
   e.target.reset(); render(data);
 });
 async function loadLog(){
   const log = await (await fetch(new URL('api/log', baseUrl()))).json();
   const el = document.getElementById('log');
-  if(!log.length){ el.innerHTML = '<div class="empty">Noch keine Vorgänge.</div>'; return }
+  if(!log.length){ el.innerHTML = '<div class="empty">No activity yet.</div>'; return }
   el.innerHTML = log.slice(0, 30).map(e => {
     const d = new Date(e.at);
-    const when = d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit'});
+    const when = d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
     return '<div class="logrow">'
-      + '<span class="st ' + (e.status==='ok'?'ok':'error') + '">' + (e.status==='ok'?'OK':'Fehler') + '</span>'
+      + '<span class="st ' + (e.status==='ok'?'ok':'error') + '">' + (e.status==='ok'?'OK':'Error') + '</span>'
       + '<span class="t">' + when + '</span>'
       + '<span class="detail">' + esc(e.guest || '') + ' · ' + esc(e.tenant || '') + ' · ' + esc(e.reservationId || '')
-      + (e.dryRun ? ' <span class="badge-dry">Testlauf</span>' : '')
+      + (e.dryRun ? ' <span class="badge-dry">Test run</span>' : '')
       + (e.screenshot ? ' · <a href="' + new URL('screenshots/' + encodeURIComponent(e.screenshot), baseUrl()).pathname + '" target="_blank">Screenshot</a>' : '')
       + (e.error ? '<br><span class="errtext">' + esc(e.error) + '</span>' : '')
       + '</span></div>';
@@ -246,22 +246,22 @@ async function loadSettings(){
   const s = await (await fetch(new URL('api/settings', baseUrl()))).json();
   document.getElementById('notifyUrl').value = s.notifyWebhookUrl || '';
   document.getElementById('callbackUrl').value = s.resultCallbackUrl || '';
-  if(!s.notifyWebhookUrl && s.envFallback){ settingsMsg.textContent = 'Aktuell aktiv: URL aus Railway-Variable. Ein hier gespeicherter Wert hat Vorrang.'; settingsMsg.className='msg'; }
+  if(!s.notifyWebhookUrl && s.envFallback){ settingsMsg.textContent = 'Currently active: URL from Railway variable. A value saved here takes precedence.'; settingsMsg.className='msg'; }
 }
 document.getElementById('settingsForm').addEventListener('submit', async e => {
   e.preventDefault();
   settingsMsg.textContent=''; settingsMsg.className='msg';
   const r = await fetch(new URL('api/settings', baseUrl()), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ notifyWebhookUrl: document.getElementById('notifyUrl').value.trim(), resultCallbackUrl: document.getElementById('callbackUrl').value.trim() })});
   const data = await r.json();
-  if(!r.ok){ settingsMsg.textContent = data.error || 'Speichern fehlgeschlagen.'; settingsMsg.className='msg err'; return }
-  settingsMsg.textContent = 'Gespeichert.'; settingsMsg.className='msg ok';
+  if(!r.ok){ settingsMsg.textContent = data.error || 'Saving failed.'; settingsMsg.className='msg err'; return }
+  settingsMsg.textContent = 'Saved.'; settingsMsg.className='msg ok';
 });
 document.getElementById('testNotify').addEventListener('click', async () => {
-  settingsMsg.textContent='Sende Testnachricht…'; settingsMsg.className='msg';
+  settingsMsg.textContent='Sending test message\u2026'; settingsMsg.className='msg';
   const r = await fetch(new URL('api/settings/test-notify', baseUrl()), {method:'POST'});
   const data = await r.json();
-  if(!r.ok || !data.ok){ settingsMsg.textContent = 'Test fehlgeschlagen: ' + (data.error || 'Status ' + data.status); settingsMsg.className='msg err'; return }
-  settingsMsg.textContent = 'Testnachricht gesendet (Status ' + data.status + ') – prüfe dein Make-Szenario.'; settingsMsg.className='msg ok';
+  if(!r.ok || !data.ok){ settingsMsg.textContent = 'Test failed: ' + (data.error || 'Status ' + data.status); settingsMsg.className='msg err'; return }
+  settingsMsg.textContent = 'Test message sent (status ' + data.status + ') \u2013 check your Make scenario.'; settingsMsg.className='msg ok';
 });
 const pwMsg = document.getElementById('pwMsg');
 document.getElementById('pwForm').addEventListener('submit', async e => {
@@ -269,11 +269,11 @@ document.getElementById('pwForm').addEventListener('submit', async e => {
   pwMsg.textContent=''; pwMsg.className='msg';
   const cur = document.getElementById('pwCurrent').value;
   const n1 = document.getElementById('pwNew').value, n2 = document.getElementById('pwNew2').value;
-  if(n1 !== n2){ pwMsg.textContent = 'Die neuen Passwörter stimmen nicht überein.'; pwMsg.className='msg err'; return }
+  if(n1 !== n2){ pwMsg.textContent = 'The new passwords do not match.'; pwMsg.className='msg err'; return }
   const r = await fetch(new URL('api/change-password', baseUrl()), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ currentPassword: cur, newPassword: n1 })});
   const data = await r.json();
-  if(!r.ok){ pwMsg.textContent = data.error || 'Ändern fehlgeschlagen.'; pwMsg.className='msg err'; return }
-  pwMsg.textContent = 'Passwort geändert. Beim nächsten Laden mit dem neuen Passwort anmelden.'; pwMsg.className='msg ok';
+  if(!r.ok){ pwMsg.textContent = data.error || 'Change failed.'; pwMsg.className='msg err'; return }
+  pwMsg.textContent = 'Password changed. Sign in with the new password on the next page load.'; pwMsg.className='msg ok';
   e.target.reset();
 });
 loadTenants();

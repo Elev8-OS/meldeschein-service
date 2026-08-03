@@ -31,10 +31,10 @@ function save(tenants) {
 function getTenants() { return load(); }
 
 function upsertTenant(id, { name, formUrl }) {
-  if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new Error("Ungültige Tenant-ID (nur Buchstaben, Zahlen, - und _).");
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new Error("Invalid tenant ID (letters, numbers, - and _ only).");
   let url;
-  try { url = new URL(formUrl); } catch (_) { throw new Error("Ungültiger Link."); }
-  if (url.hostname !== "shop.hochschwarzwald.de") throw new Error("Der Link muss auf shop.hochschwarzwald.de zeigen.");
+  try { url = new URL(formUrl); } catch (_) { throw new Error("Invalid link."); }
+  if (url.hostname !== "shop.hochschwarzwald.de") throw new Error("The link must point to shop.hochschwarzwald.de.");
   const tenants = load();
   tenants[id] = { name: String(name || id).slice(0, 120), formUrl };
   save(tenants);
@@ -50,7 +50,7 @@ function deleteTenant(id) {
 
 function getFormUrl(tenantId) {
   const t = load()[tenantId];
-  if (!t) throw new Error(`Kein Tenant für tenantId "${tenantId}" konfiguriert (im Admin-Bereich anlegen)`);
+  if (!t) throw new Error(`No tenant configured for tenantId "${tenantId}" (add it in the admin panel)`);
   return t.formUrl;
 }
 
@@ -109,8 +109,8 @@ function saveSettings(patch) {
   for (const key of ["notifyWebhookUrl", "resultCallbackUrl"]) {
     if (next[key]) {
       let u;
-      try { u = new URL(next[key]); } catch (_) { throw new Error("Ungültige URL bei " + key + "."); }
-      if (u.protocol !== "https:") throw new Error("Die URL muss mit https:// beginnen (" + key + ").");
+      try { u = new URL(next[key]); } catch (_) { throw new Error("Invalid URL for " + key + "."); }
+      if (u.protocol !== "https:") throw new Error("The URL must start with https:// (" + key + ").");
     }
   }
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -135,7 +135,7 @@ function hashPassword(pw, salt) {
 
 function setAdminPassword(newPassword) {
   if (!newPassword || String(newPassword).length < 12) {
-    throw new Error("Das neue Passwort muss mindestens 12 Zeichen lang sein.");
+    throw new Error("The new password must be at least 12 characters long.");
   }
   const salt = crypto.randomBytes(16).toString("hex");
   saveSettings({ adminPasswordSalt: salt, adminPasswordHash: hashPassword(newPassword, salt) });
