@@ -5,7 +5,8 @@ const express = require("express");
 const { mapGuestGuideToMeldeschein } = require("./mapping");
 const { fillAndSubmit } = require("./fill-form");
 const fs = require("fs");
-const { getFormUrl, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, getResultCallbackUrl } = require("./store");
+const { getTenant, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, getResultCallbackUrl } = require("./store");
+const { submitHswPass } = require("./hswpass");
 const { notifyError } = require("./notify");
 const adminRouter = require("./admin");
 
@@ -28,23 +29,32 @@ async function processQueue() {
   while (queue.length > 0) {
     const job = queue.shift();
     const who = `${job.data.mainGuest.firstName} ${job.data.mainGuest.lastName}`;
-    const baseName = `${String(job.reservationId).replace(/[^A-Za-z0-9._-]/g, "_")}-${Date.now()}${job.dryRun ? "-testlauf" : ""}`;
+    const baseName = `${String(job.reservationId).replace(/[^A-Za-z0-9._-]/g, "_")}-${job.channel}-${Date.now()}${job.dryRun ? "-testlauf" : ""}`;
     const shotName = `${baseName}.png`;
     const errShotName = `${baseName}-fehler.png`;
     try {
-      const result = await fillAndSubmit(job.data, {
-        dryRun: job.dryRun,
-        formUrl: job.formUrl,
-        screenshotPath: screenshotPath(shotName),
-        errorScreenshotPath: screenshotPath(errShotName),
-      });
+      let result;
+      if (job.channel === "hsw") {
+        result = await submitHswPass(job.data, {
+          hswUrl: job.hswUrl,
+          dryRun: job.dryRun,
+          signatureImage: job.data.signatureImage,
+        });
+      } else {
+        result = await fillAndSubmit(job.data, {
+          dryRun: job.dryRun,
+          formUrl: job.formUrl,
+          screenshotPath: screenshotPath(shotName),
+          errorScreenshotPath: screenshotPath(errShotName),
+        });
+      }
       if (!job.dryRun) markSubmitted(job.dedupeKey);
-      console.log(`[OK] Meldeschein eingereicht für ${who} (Reservierung ${job.reservationId})`, result);
+      console.log(`[OK] [${job.channel}] Meldeschein eingereicht für ${who} (Reservierung ${job.reservationId})`, result);
       // Ergebnis + Beleg-Screenshot zurück an Elev8 (falls Callback-URL hinterlegt)
-      if (!job.dryRun) {
+      if (!job.dryRun && job.channel === "htg") {
         sendResultCallback(job, shotName).catch((e) => console.error("[CALLBACK-FEHLER]", e.message));
       }
-      appendLog({ status: "ok", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, screenshot: shotName, attempt: job.attempt + 1 });
+      appendLog({ status: "ok", channel: job.channel, dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, screenshot: job.channel === "htg" ? shotName : undefined, checkinNr: result.checkinNr, attempt: job.attempt + 1 });
     } catch (err) {
       job.attempt = (job.attempt || 0) + 1;
       if (job.attempt <= RETRY_DELAYS_MS.length) {
@@ -52,9 +62,9 @@ async function processQueue() {
         console.warn(`[RETRY] Reservierung ${job.reservationId}, Versuch ${job.attempt} fehlgeschlagen (${err.message}) – nächster Versuch in ${Math.round(delay / 60000)} min`);
         setTimeout(() => { queue.push(job); processQueue(); }, delay);
       } else {
-        console.error(`[FEHLER] Reservierung ${job.reservationId} endgültig fehlgeschlagen:`, err.message);
-        appendLog({ status: "error", dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, error: err.message, attempt: job.attempt, screenshot: fs.existsSync(screenshotPath(errShotName)) ? errShotName : undefined });
-        notifyError(`⚠️ Meldeschein FEHLGESCHLAGEN (nach ${job.attempt} Versuchen)\nGast: ${who}\nReservierung: ${job.reservationId}\nTenant: ${job.tenantName}\nFehler: ${err.message}\n→ Bitte manuell im Meldewesen nachtragen.`);
+        console.error(`[FEHLER] [${job.channel}] Reservierung ${job.reservationId} endgültig fehlgeschlagen:`, err.message);
+        appendLog({ status: "error", channel: job.channel, dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, error: err.message, attempt: job.attempt, screenshot: fs.existsSync(screenshotPath(errShotName)) ? errShotName : undefined });
+        notifyError(`⚠️ ${job.channel === "hsw" ? "HSW Pass" : "HTG Meldeschein"} FAILED (after ${job.attempt} attempts)\nGuest: ${who}\nReservation: ${job.reservationId}\nTenant: ${job.tenantName}\nError: ${err.message}\n→ Please submit manually.`);
       }
     }
   }
@@ -90,37 +100,45 @@ app.post("/webhook/guest-guide-completed", (req, res) => {
     return res.status(401).json({ error: "unauthorized" });
   }
 
-  let mapped, formUrl;
+  let mapped, tenant;
   try {
     mapped = mapGuestGuideToMeldeschein(req.body);
-    formUrl = getFormUrl(req.body.tenantId);
+    tenant = getTenant(req.body.tenantId);
   } catch (err) {
     console.error("[MAPPING-FEHLER]", err.message, JSON.stringify(req.body));
     return res.status(400).json({ error: "invalid payload", detail: err.message });
   }
 
-  // Duplikat-Schutz: gleiche Reservierung + Revision nicht zweimal einreichen
   const dryRun = req.query.dryRun === "1";
-  const dedupeKey = `${req.body.reservationId || "unbekannt"}:${req.body.revision || 1}`;
-  if (!dryRun && isSubmitted(dedupeKey)) {
-    console.log(`[DUPLIKAT] ${dedupeKey} bereits eingereicht – übersprungen`);
-    return res.status(200).json({ status: "duplicate", detail: "already submitted" });
-  }
-
-  queue.push({
+  const baseKey = `${req.body.reservationId || "unbekannt"}:${req.body.revision || 1}`;
+  const jobBase = {
     data: mapped,
-    formUrl,
-    dedupeKey,
     attempt: 0,
     tenantId: req.body.tenantId,
     tenantName: getTenantName(req.body.tenantId),
     reservationId: req.body.reservationId || "unbekannt",
     dryRun,
-  });
+  };
+
+  // Kanal 1: HTG-Formular (shop.hochschwarzwald.de) – Duplikate pro Kanal prüfen
+  const queued = [];
+  if (dryRun || !isSubmitted(`${baseKey}:htg`)) {
+    queue.push({ ...jobBase, channel: "htg", formUrl: tenant.formUrl, dedupeKey: `${baseKey}:htg` });
+    queued.push("htg");
+  }
+  // Kanal 2: HSW Pass (Tramino) – nur wenn beim Tenant ein Link hinterlegt ist
+  if (tenant.hswPassUrl && (dryRun || !isSubmitted(`${baseKey}:hsw`))) {
+    queue.push({ ...jobBase, channel: "hsw", hswUrl: tenant.hswPassUrl, dedupeKey: `${baseKey}:hsw` });
+    queued.push("hsw");
+  }
+  if (queued.length === 0) {
+    console.log(`[DUPLIKAT] ${baseKey} bereits auf allen Kanälen eingereicht – übersprungen`);
+    return res.status(200).json({ status: "duplicate", detail: "already submitted" });
+  }
   processQueue();
 
   // Sofort antworten – das Ausfüllen läuft asynchron
-  res.status(202).json({ status: "queued" });
+  res.status(202).json({ status: "queued", channels: queued });
 });
 
 app.use("/admin", adminRouter);

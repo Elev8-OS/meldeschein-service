@@ -30,13 +30,20 @@ function save(tenants) {
 
 function getTenants() { return load(); }
 
-function upsertTenant(id, { name, formUrl }) {
+function upsertTenant(id, { name, formUrl, hswPassUrl }) {
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new Error("Invalid tenant ID (letters, numbers, - and _ only).");
   let url;
   try { url = new URL(formUrl); } catch (_) { throw new Error("Invalid link."); }
   if (url.hostname !== "shop.hochschwarzwald.de") throw new Error("The link must point to shop.hochschwarzwald.de.");
+  let hsw = String(hswPassUrl || "").trim();
+  if (hsw) {
+    let hu;
+    try { hu = new URL(hsw); } catch (_) { throw new Error("Invalid HSW Pass link."); }
+    if (!/(^|\.)hswpass\.de$/.test(hu.hostname)) throw new Error("The HSW Pass link must point to hswpass.de.");
+    if (!hu.searchParams.get("set_pass")) throw new Error("The HSW Pass link must contain a set_pass token.");
+  }
   const tenants = load();
-  tenants[id] = { name: String(name || id).slice(0, 120), formUrl };
+  tenants[id] = { name: String(name || id).slice(0, 120), formUrl, hswPassUrl: hsw || undefined };
   save(tenants);
   return tenants;
 }
@@ -48,10 +55,14 @@ function deleteTenant(id) {
   return tenants;
 }
 
-function getFormUrl(tenantId) {
+function getTenant(tenantId) {
   const t = load()[tenantId];
   if (!t) throw new Error(`No tenant configured for tenantId "${tenantId}" (add it in the admin panel)`);
-  return t.formUrl;
+  return t;
+}
+
+function getFormUrl(tenantId) {
+  return getTenant(tenantId).formUrl;
 }
 
 // ---- Aktivitätsprotokoll (letzte 100 Vorgänge) ----
@@ -154,4 +165,4 @@ function verifyAdminPassword(pw) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-module.exports = { getTenants, upsertTenant, deleteTenant, getFormUrl, getLog, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, SCREENSHOT_DIR, getSettings, saveSettings, getNotifyUrl, getResultCallbackUrl, setAdminPassword, verifyAdminPassword };
+module.exports = { getTenants, upsertTenant, deleteTenant, getTenant, getFormUrl, getLog, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, SCREENSHOT_DIR, getSettings, saveSettings, getNotifyUrl, getResultCallbackUrl, setAdminPassword, verifyAdminPassword };

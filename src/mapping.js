@@ -66,6 +66,7 @@ function mapGuestGuideToMeldeschein(payload) {
       toDate: isoDate(payload.stay && payload.stay.checkOut, "stay.checkOut"),
     },
     mainGuest: mapPerson(payload.guest || {}, "guest", { main: true }),
+    signatureImage: (payload.guest && payload.guest.signatureImage) || null,
     companions: (payload.companions || []).map((c, i) => mapPerson(c, `companions[${i}]`)),
   };
 }
