@@ -7,6 +7,7 @@ const { fillAndSubmit } = require("./fill-form");
 const fs = require("fs");
 const { getTenant, appendLog, getTenantName, isSubmitted, markSubmitted, screenshotPath, getResultCallbackUrl } = require("./store");
 const { submitHswPass } = require("./hswpass");
+const { renderHswReceipt } = require("./receipt");
 const { notifyError } = require("./notify");
 const adminRouter = require("./admin");
 
@@ -49,13 +50,27 @@ async function processQueue() {
         });
       }
       if (!job.dryRun) markSubmitted(job.dedupeKey);
+      // HSW: Beleg-PNG mit Self-Checkin-Nr., Gästedaten und Unterschrift rendern
+      if (!job.dryRun && job.channel === "hsw" && result.checkinNr) {
+        try {
+          await renderHswReceipt(job.data, {
+            checkinNr: result.checkinNr,
+            tenantName: job.tenantName,
+            signatureImage: job.data.signatureImage,
+            outPath: screenshotPath(shotName),
+          });
+          console.log(`[HSW-BELEG] PNG erstellt: ${shotName}`);
+        } catch (e) {
+          console.warn("[HSW-BELEG] Rendering fehlgeschlagen (Einreichung bleibt gültig):", e.message);
+        }
+      }
       console.log(`[OK] [${job.channel}] Meldeschein eingereicht für ${who} (Reservierung ${job.reservationId})`, result);
       // Ergebnis zurück an Elev8 (falls Callback-URL hinterlegt):
-      // HTG mit Beleg-Screenshot, HSW mit Self-Checkin-Nummer
+      // beide Kanäle mit Beleg-PNG, HSW zusätzlich mit Self-Checkin-Nummer
       if (!job.dryRun) {
         sendResultCallback(job, { shotName, checkinNr: result.checkinNr }).catch((e) => console.error("[CALLBACK-FEHLER]", e.message));
       }
-      appendLog({ status: "ok", channel: job.channel, dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, screenshot: job.channel === "htg" ? shotName : undefined, checkinNr: result.checkinNr, attempt: job.attempt + 1 });
+      appendLog({ status: "ok", channel: job.channel, dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, screenshot: fs.existsSync(screenshotPath(shotName)) ? shotName : undefined, checkinNr: result.checkinNr, attempt: job.attempt + 1 });
     } catch (err) {
       job.attempt = (job.attempt || 0) + 1;
       if (job.attempt <= RETRY_DELAYS_MS.length) {
@@ -83,13 +98,12 @@ async function sendResultCallback(job, { shotName, checkinNr } = {}) {
     status: "submitted",
     submittedAt: new Date().toISOString(),
   };
-  if (job.channel === "htg") {
-    try {
-      payload.screenshot = "data:image/png;base64," + fs.readFileSync(screenshotPath(shotName)).toString("base64");
-    } catch (_) {
-      payload.screenshot = null;
-    }
-  } else if (job.channel === "hsw") {
+  try {
+    payload.screenshot = "data:image/png;base64," + fs.readFileSync(screenshotPath(shotName)).toString("base64");
+  } catch (_) {
+    payload.screenshot = null;
+  }
+  if (job.channel === "hsw") {
     payload.checkinNr = checkinNr || null;
   }
   const r = await fetch(url, {
