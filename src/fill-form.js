@@ -188,9 +188,11 @@ async function fillAndSubmit(data, { dryRun = false, formUrl, screenshotPath, er
     // Absenden – gezielt der Speichern-Button im Quick-Check-in-Formular
     await page.click('form:has(#correctness-disclaimer) button[type="submit"]');
 
-    // Erfolg ODER Fehlermeldung der Seite abwarten
+    // Erfolg ODER Fehlermeldung der Seite abwarten.
+    // Die echte Erfolgsseite zeigt "Geschafft! ... erfolgreich abgeschlossen".
     const outcome = await Promise.race([
       page.waitForSelector(".quick-check-in-success-msg", { timeout: 30000 }).then(() => ({ ok: true })),
+      page.waitForFunction(() => /Geschafft|erfolgreich abgeschlossen/i.test(document.body.innerText || ""), { timeout: 30000 }).then(() => ({ ok: true })),
       page.waitForSelector(".alert-danger", { timeout: 30000 }).then(async (el) => ({ ok: false, serverMsg: ((await el.textContent()) || "").trim() })),
     ]).catch(() => null);
 
