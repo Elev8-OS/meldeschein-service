@@ -10,7 +10,7 @@ const { notifyError } = require("./notify");
 const adminRouter = require("./admin");
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "10mb" })); // Unterschrift-Bilder (Base64) brauchen Platz
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET; // in Railway als Variable setzen
 const PORT = process.env.PORT || 3000;
