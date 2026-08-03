@@ -50,9 +50,10 @@ async function processQueue() {
       }
       if (!job.dryRun) markSubmitted(job.dedupeKey);
       console.log(`[OK] [${job.channel}] Meldeschein eingereicht für ${who} (Reservierung ${job.reservationId})`, result);
-      // Ergebnis + Beleg-Screenshot zurück an Elev8 (falls Callback-URL hinterlegt)
-      if (!job.dryRun && job.channel === "htg") {
-        sendResultCallback(job, shotName).catch((e) => console.error("[CALLBACK-FEHLER]", e.message));
+      // Ergebnis zurück an Elev8 (falls Callback-URL hinterlegt):
+      // HTG mit Beleg-Screenshot, HSW mit Self-Checkin-Nummer
+      if (!job.dryRun) {
+        sendResultCallback(job, { shotName, checkinNr: result.checkinNr }).catch((e) => console.error("[CALLBACK-FEHLER]", e.message));
       }
       appendLog({ status: "ok", channel: job.channel, dryRun: job.dryRun, reservationId: job.reservationId, tenant: job.tenantName, guest: who, screenshot: job.channel === "htg" ? shotName : undefined, checkinNr: result.checkinNr, attempt: job.attempt + 1 });
     } catch (err) {
@@ -71,27 +72,33 @@ async function processQueue() {
   working = false;
 }
 
-async function sendResultCallback(job, shotName) {
+async function sendResultCallback(job, { shotName, checkinNr } = {}) {
   const url = getResultCallbackUrl();
   if (!url) return;
-  let screenshotBase64 = null;
-  try {
-    screenshotBase64 = "data:image/png;base64," + fs.readFileSync(screenshotPath(shotName)).toString("base64");
-  } catch (_) {}
+  const payload = {
+    event: "meldeschein.submitted",
+    channel: job.channel, // "htg" | "hsw"
+    reservationId: job.reservationId,
+    tenantId: job.tenantId,
+    status: "submitted",
+    submittedAt: new Date().toISOString(),
+  };
+  if (job.channel === "htg") {
+    try {
+      payload.screenshot = "data:image/png;base64," + fs.readFileSync(screenshotPath(shotName)).toString("base64");
+    } catch (_) {
+      payload.screenshot = null;
+    }
+  } else if (job.channel === "hsw") {
+    payload.checkinNr = checkinNr || null;
+  }
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-webhook-secret": WEBHOOK_SECRET },
-    body: JSON.stringify({
-      event: "meldeschein.submitted",
-      reservationId: job.reservationId,
-      tenantId: job.tenantId,
-      status: "submitted",
-      submittedAt: new Date().toISOString(),
-      screenshot: screenshotBase64,
-    }),
+    body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(`Callback-Status ${r.status}`);
-  console.log(`[CALLBACK] Ergebnis für ${job.reservationId} an Elev8 gesendet`);
+  console.log(`[CALLBACK] [${job.channel}] Ergebnis für ${job.reservationId} an Elev8 gesendet`);
 }
 
 app.post("/webhook/guest-guide-completed", (req, res) => {
